@@ -42,6 +42,15 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
     private var lastRestoreAtMs = 0L
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        try {
+            handleAccessibilityEvent(event)
+        } catch (t: Throwable) {
+            // Never let an a11y callback crash the process — HyperOS then marks us Crashed.
+            Log.e(TAG, "onAccessibilityEvent crashed (swallowed)", t)
+        }
+    }
+
+    private fun handleAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (!AutoPausePrefs.isEnabled(this)) return
 
@@ -74,7 +83,11 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
         // Content events can arrive from non-foreground windows — require match.
         if (isContentHint && !isWindowSwitch) {
-            val active = rootInActiveWindow?.packageName?.toString()
+            val active = try {
+                rootInActiveWindow?.packageName?.toString()
+            } catch (_: Exception) {
+                null
+            }
             if (active != null && active != pkg) return
         }
 
@@ -94,8 +107,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
                     Log.d(TAG, "Re-entry bypass pkg=$pkg — allow kick")
                     onEnteredBypassApp(pkg)
                 }
-                isVpnNeeded && paused -> {
-                    Log.d(TAG, "Re-entry vpn-needed pkg=$pkg while paused — restore")
+                isVpnNeeded && (paused || !isVpnTransportActive()) -> {
+                    Log.d(TAG, "Re-entry vpn-needed pkg=$pkg — restore")
                     onEnteredVpnNeededApp(pkg)
                 }
             }
@@ -114,12 +127,18 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        AutoPausePrefs.ensureListsInitialized(this)
-        Log.i(TAG, "Accessibility connected; autoPause=${AutoPausePrefs.isEnabled(this)}")
-        // Clear sticky stuck flags from older buggy builds
-        if (!AutoPausePrefs.isEnabled(this)) {
-            AutoPausePrefs.setPaused(this, false)
-            AutoPausePrefs.setRestoring(this, false)
+        try {
+            AutoPausePrefs.ensureListsInitialized(this)
+            Log.i(TAG, "Accessibility connected; autoPause=${AutoPausePrefs.isEnabled(this)}")
+            if (!AutoPausePrefs.isEnabled(this)) {
+                AutoPausePrefs.setPaused(this, false)
+                AutoPausePrefs.setRestoring(this, false)
+                AutoPauseKeepAliveService.stop(this)
+            } else {
+                AutoPauseKeepAliveService.start(this)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "onServiceConnected failed", t)
         }
     }
 
@@ -316,21 +335,15 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
                             connectClickInFlight = false
                         }
                     } finally {
-                        try {
-                            again?.recycle()
-                        } catch (_: Exception) {
-                        }
+                        // no recycle
                     }
                 }, 1500)
             }
         } catch (e: Exception) {
             Log.w(TAG, "tryAutoClickConnect failed", e)
-        } finally {
-            try {
-                root.recycle()
-            } catch (_: Exception) {
-            }
+            connectClickInFlight = false
         }
+        // Do not recycle root — OEM trees crash if recycled while still referenced.
     }
 
     private fun onRestoreSucceeded() {
@@ -633,6 +646,21 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             return enabled.split(':').any { flat ->
                 ComponentName.unflattenFromString(flat)?.flattenToString() ==
                     expected.flattenToString()
+            }
+        }
+
+        /** True only if the service is actually bound/running (not just toggled in Settings). */
+        fun isAccessibilityRunning(context: Context): Boolean {
+            val am = context.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+                ?: return false
+            val expected = ComponentName(context, VpnAutoPauseAccessibilityService::class.java)
+            @Suppress("DEPRECATION")
+            val list = am.getEnabledAccessibilityServiceList(
+                android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+            )
+            return list.any { info ->
+                val si = info.resolveInfo?.serviceInfo ?: return@any false
+                ComponentName(si.packageName, si.name) == expected
             }
         }
     }

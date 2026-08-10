@@ -26,6 +26,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var accessibilityEnabled by mutableStateOf(false)
         private set
 
+    /** Settings says on, but HyperOS killed the process (Crashed services). */
+    var accessibilityCrashed by mutableStateOf(false)
+        private set
+
     var selectedVpnPackage by mutableStateOf("")
         private set
 
@@ -86,6 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         autoPauseEnabled = AutoPausePrefs.isEnabled(context)
         accessibilityEnabled = VpnAutoPauseAccessibilityService.isAccessibilityEnabled(context)
+        val accessibilityRunning = VpnAutoPauseAccessibilityService.isAccessibilityRunning(context)
+        accessibilityCrashed = accessibilityEnabled && !accessibilityRunning
         notifyFallback = AutoPausePrefs.isNotifyFallback(context)
         vpnApps = VpnAppScanner.listVpnApps(context)
         restrictedSettingsDone = SetupPrefs.isRestrictedDone(context)
@@ -126,12 +132,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         autoPauseStatus = when {
             !autoPauseEnabled -> "Выключено"
+            accessibilityCrashed -> "Убито HyperOS — перевключите спец. возможности"
             !accessibilityEnabled -> "Включите спец. возможности"
             !vpnPermissionGranted -> "Нужно разрешение VPN (один раз)"
             selectedVpnPackage.isBlank() -> "Выберите VPN для возврата"
             AutoPausePrefs.isRestoring(context) -> "Тихо включает VPN…"
             AutoPausePrefs.isPaused(context) -> "Пауза · VPN сброшен (ждёт TG/YouTube…)"
             else -> "Следит в фоне"
+        }
+
+        if (autoPauseEnabled && accessibilityRunning) {
+            AutoPauseKeepAliveService.start(context)
+        } else if (!autoPauseEnabled) {
+            AutoPauseKeepAliveService.stop(context)
         }
 
         setupStep = when {
@@ -187,6 +200,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>()
         AutoPausePrefs.setEnabled(context, enabled)
         autoPauseEnabled = enabled
+        if (enabled) {
+            AutoPauseKeepAliveService.start(context)
+        } else {
+            AutoPauseKeepAliveService.stop(context)
+        }
         refreshState()
     }
 

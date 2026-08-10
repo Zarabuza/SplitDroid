@@ -3,10 +3,15 @@
     <string name="app_name">Раздельный туннель</string>
     <string name="accessibility_service_description">В фоне: в приложениях «без VPN» сбрасывает чужой VPN; в приложениях вроде Telegram/YouTube тихо включает выбранный VPN и жмёт «Подключить». С Home VPN сам не включается.</string>
     <string name="auto_pause_channel">Автопауза VPN</string>
+    <string name="auto_pause_keepalive_channel">Фоновый контроль VPN</string>
+    <string name="auto_pause_keepalive_title">Раздельный туннель активен</string>
+    <string name="auto_pause_keepalive_text">Не закрывайте уведомление — иначе HyperOS убьёт слежение</string>
     <string name="auto_pause_kick_title">Пауза VPN</string>
     <string name="auto_pause_kick_text">Сброс активного VPN…</string>
     <string name="auto_pause_paused_title">VPN отключён</string>
     <string name="auto_pause_paused_text">Включится при входе в приложение из списка «нужен VPN»</string>
     <string name="auto_pause_restore_title">Включите VPN снова</string>
     <string name="auto_pause_restore_text">Не удалось нажать «Подключить» автоматически — откройте VPN</string>
+    <string name="auto_pause_crashed_title">Слежение убито системой</string>
+    <string name="auto_pause_crashed_text">HyperOS очистила процесс. Выключите и снова включите спец. возможности. В автозапуске/батарее поставьте «Без ограничений» и закрепите приложение.</string>
 </resources>

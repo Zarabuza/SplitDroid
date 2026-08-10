@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
                             autoPauseEnabled = viewModel.autoPauseEnabled,
                             autoPauseStatus = viewModel.autoPauseStatus,
                             accessibilityEnabled = viewModel.accessibilityEnabled,
+                            accessibilityCrashed = viewModel.accessibilityCrashed,
                             selectedVpnLabel = viewModel.selectedVpnLabel,
                             selectedVpnPackage = viewModel.selectedVpnPackage,
                             vpnApps = viewModel.vpnApps,
@@ -145,6 +146,7 @@ class MainActivity : ComponentActivity() {
                             onToggleAutoPause = { enabled -> onAutoPauseChanged(enabled) },
                             onToggleNotifyFallback = { viewModel.updateNotifyFallback(it) },
                             onOpenAccessibility = { openAccessibilitySettings() },
+                            onOpenBattery = { openBatteryOptimizationSettings() },
                             onOpenSetup = { viewModel.reopenWizard() },
                             onSelectVpn = { viewModel.selectVpnApp(it) },
                             onRequestVpnPermission = { ensureVpnPermissionForAutoPause() },
@@ -211,6 +213,26 @@ class MainActivity : ComponentActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
+    }
+
+    private fun openBatteryOptimizationSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                startActivity(
+                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                )
+            } catch (_: Exception) {
+                openAppInfoForRestrictedSettings()
+            }
+        }
     }
 
     private fun ensureVpnPermissionForAutoPause() {
@@ -486,6 +508,7 @@ fun MainScreen(
     autoPauseEnabled: Boolean,
     autoPauseStatus: String,
     accessibilityEnabled: Boolean,
+    accessibilityCrashed: Boolean,
     selectedVpnLabel: String,
     selectedVpnPackage: String,
     vpnApps: List<VpnAppInfo>,
@@ -497,6 +520,7 @@ fun MainScreen(
     onToggleAutoPause: (Boolean) -> Unit,
     onToggleNotifyFallback: (Boolean) -> Unit,
     onOpenAccessibility: () -> Unit,
+    onOpenBattery: () -> Unit,
     onOpenSetup: () -> Unit,
     onSelectVpn: (VpnAppInfo) -> Unit,
     onRequestVpnPermission: () -> Unit,
@@ -554,12 +578,31 @@ fun MainScreen(
             Text(
                 text = autoPauseStatus,
                 style = MaterialTheme.typography.bodyLarge,
-                color = if (autoPauseStatus.startsWith("Следит")) Color(0xFF2E7D32)
-                else MaterialTheme.colorScheme.onSurface
+                color = when {
+                    autoPauseStatus.startsWith("Следит") -> Color(0xFF2E7D32)
+                    accessibilityCrashed -> Color(0xFFC62828)
+                    else -> MaterialTheme.colorScheme.onSurface
+                }
             )
         }
 
-        if (!accessibilityEnabled) {
+        if (accessibilityCrashed) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "HyperOS убила слежение (очистка памяти). Выключи и снова включи спец. возможности.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFFC62828),
+                textAlign = TextAlign.Center
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(onClick = onOpenAccessibility, modifier = Modifier.fillMaxWidth()) {
+                Text("Переключить спец. возможности")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenBattery, modifier = Modifier.fillMaxWidth()) {
+                Text("Батарея без ограничений")
+            }
+        } else if (!accessibilityEnabled) {
             Spacer(modifier = Modifier.height(12.dp))
             Button(onClick = onOpenSetup, modifier = Modifier.fillMaxWidth()) {
                 Text("Пройти настройку заново")
@@ -570,10 +613,14 @@ fun MainScreen(
             }
         }
 
-        if (autoPauseEnabled && accessibilityEnabled) {
+        if (autoPauseEnabled && accessibilityEnabled && !accessibilityCrashed) {
             Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onRequestVpnPermission) {
                 Text("Проверить разрешение VPN")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenBattery, modifier = Modifier.fillMaxWidth()) {
+                Text("Батарея без ограничений (важно)")
             }
         }
 
