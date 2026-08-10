@@ -19,6 +19,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var vpnPermissionGranted by mutableStateOf(false)
         private set
 
+    var autoPauseEnabled by mutableStateOf(false)
+        private set
+
+    var accessibilityEnabled by mutableStateOf(false)
+        private set
+
+    var selectedVpnPackage by mutableStateOf("")
+        private set
+
+    var selectedVpnLabel by mutableStateOf("Не выбран")
+        private set
+
+    var vpnApps by mutableStateOf<List<VpnAppInfo>>(emptyList())
+        private set
+
+    var autoPauseStatus by mutableStateOf("")
+        private set
+
+    var notifyFallback by mutableStateOf(false)
+        private set
+
     private var isStarting = false
 
     init {
@@ -34,7 +55,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .getSharedPreferences(SplitTunnelVpnService.PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(SplitTunnelVpnService.KEY_IS_RUNNING, false)
 
-        // After process death static flag resets; clear stale prefs
         if (!live && prefs) {
             context.getSharedPreferences(SplitTunnelVpnService.PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
@@ -44,7 +64,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         isRunning = live
         if (live) isStarting = false
+
+        autoPauseEnabled = AutoPausePrefs.isEnabled(context)
+        accessibilityEnabled = VpnAutoPauseAccessibilityService.isAccessibilityEnabled(context)
+        notifyFallback = AutoPausePrefs.isNotifyFallback(context)
+        vpnApps = VpnAppScanner.listVpnApps(context)
+
+        selectedVpnPackage = AutoPausePrefs.vpnPackage(context)
+        if (selectedVpnPackage.isBlank()) {
+            val preferred = vpnApps.find {
+                it.packageName == VpnAutoPauseAccessibilityService.PREFERRED_VPN_PACKAGE
+            } ?: vpnApps.firstOrNull()
+            if (preferred != null) {
+                AutoPausePrefs.setVpnPackage(context, preferred.packageName)
+                selectedVpnPackage = preferred.packageName
+            }
+        }
+
+        selectedVpnLabel = vpnApps.find { it.packageName == selectedVpnPackage }?.label
+            ?: if (selectedVpnPackage.isBlank()) "Не выбран" else selectedVpnPackage
+
+        autoPauseStatus = when {
+            !autoPauseEnabled -> "Выключено"
+            !accessibilityEnabled -> "Включите спец. возможности"
+            !vpnPermissionGranted -> "Нужно разрешение VPN (один раз)"
+            selectedVpnPackage.isBlank() -> "Выберите VPN для возврата"
+            AutoPausePrefs.isRestoring(context) -> "Тихо включает VPN…"
+            AutoPausePrefs.isPaused(context) -> "Пауза · VPN сброшен для банка"
+            else -> "Следит в фоне"
+        }
+
         updateStatusText()
+    }
+
+    fun updateAutoPauseEnabled(enabled: Boolean) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.setEnabled(context, enabled)
+        autoPauseEnabled = enabled
+        refreshState()
+    }
+
+    fun updateNotifyFallback(enabled: Boolean) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.setNotifyFallback(context, enabled)
+        notifyFallback = enabled
+    }
+
+    fun selectVpnApp(info: VpnAppInfo) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.setVpnPackage(context, info.packageName)
+        selectedVpnPackage = info.packageName
+        selectedVpnLabel = info.label
+        refreshState()
     }
 
     fun onVpnPermissionResult(granted: Boolean) {
@@ -54,6 +125,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isRunning = false
         }
         updateStatusText()
+        refreshState()
     }
 
     fun setStarting() {

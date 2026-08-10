@@ -7,7 +7,6 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Android 11+ package visibility: required for addDisallowedApplication checks -->
     <queries>
         <package android:name="ru.sberbankmobile" />
         <package android:name="ru.sberbank.sberbankid" />
@@ -42,9 +41,13 @@
         <package android:name="ru.megafon.mlk" />
         <package android:name="ru.russianpost.android" />
         <package android:name="ru.rzd.pass" />
+        <package android:name="st.uboo.android.client" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.net.VpnService" />
         </intent>
     </queries>
 
@@ -78,6 +81,31 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="VPN split tunnel for Russian services" />
+        </service>
+
+        <service
+            android:name=".VpnKickService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Brief VPN kick to pause third-party VPN" />
+        </service>
+
+        <service
+            android:name=".VpnAutoPauseAccessibilityService"
+            android:exported="false"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
         </service>
     </application>
 </manifest>
