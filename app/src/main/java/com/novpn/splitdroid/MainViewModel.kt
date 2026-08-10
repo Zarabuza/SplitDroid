@@ -61,7 +61,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         updateStatusText()
     }
 
-    fun setRunning(running: Boolean) {
+    fun markRunning(running: Boolean) {
         isRunning = running
         isStarting = false
         updateStatusText()
@@ -71,7 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         statusText = when {
             isStarting -> "Запускается..."
             !vpnPermissionGranted && !isRunning -> "Не настроено"
-            isRunning -> "Работает · российские сервисы защищены"
+            isRunning -> "Работает · банки и Госуслуги в обход VPN"
             else -> "Остановлено"
         }
     }

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Раздельный туннель — российские сервисы без отключения VPN</title>
+  <meta name="description" content="Раздельный туннель держит банки, Госуслуги и маркетплейсы доступными, пока остальной трафик идёт через ваш VPN." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="landing.css" />
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+
+  <header class="top">
+    <a class="brand" href="#top">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Раздельный туннель</span>
+    </a>
+    <a class="top-cta" href="#download">Скачать APK</a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="brand-hero">Раздельный туннель</p>
+        <h1>Банки и Госуслуги — вне туннеля.</h1>
+        <p class="lead">Сбер, Госуслуги и другие российские приложения исключаются из VPN и идут напрямую. Android допускает только один VPN — отключите коммерческий перед запуском.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#download">Установить на Android</a>
+          <a class="btn btn-ghost" href="#how">Как это работает</a>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <div class="orbit"></div>
+        <div class="phone">
+          <div class="phone-screen">
+            <div class="shield-glow"></div>
+            <svg class="shield" viewBox="0 0 120 140" fill="none">
+              <path d="M60 8C58 8 28 28 28 28v36c0 34 24 58 32 64 8-6 32-30 32-64V28S62 8 60 8Z" fill="url(#sg)" stroke="#D8FFE0" stroke-width="3"/>
+              <path d="M44 72l12 12 24-28" stroke="#0B2A14" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+              <defs>
+                <linearGradient id="sg" x1="28" y1="8" x2="96" y2="128" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#7CFF9A"/>
+                  <stop offset="1" stop-color="#1FA84A"/>
+                </linearGradient>
+              </defs>
+            </svg>
+            <p class="phone-status">Работает · сервисы защищены</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="how">
+      <h2>Один переключатель. Честный обход для банков.</h2>
+      <p class="section-lead">На Android нельзя держать два VPN сразу. SplitDroid сам становится VPN и выводит российские приложения из туннеля.</p>
+      <div class="steps">
+        <article>
+          <span>01</span>
+          <h3>Отключаете другой VPN</h3>
+          <p>Коммерческий VPN должен быть выключен — иначе система не даст поднять второй туннель.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h3>Запускаете туннель</h3>
+          <p>Один тап. Сбер, Госуслуги и другие из списка исключаются из VPN и ходят напрямую.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h3>Пользуетесь банками</h3>
+          <p>Российские приложения видят обычную сеть без TRANSPORT_VPN. DNS для остальных — раздельный.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section services">
+      <h2>Уже внутри списка</h2>
+      <p class="section-lead">Сбер, Т‑Банк, Госуслуги, ВТБ, Альфа, Ozon, Wildberries, Яндекс, Авито и ещё десяток сервисов.</p>
+      <div class="chips" id="chips"></div>
+    </section>
+
+    <section class="section download" id="download">
+      <h2>Поставьте и проверьте за минуту</h2>
+      <p class="section-lead">Debug‑сборка для Android 8.0+. Установка из файла — без Google Play.</p>
+      <a class="btn btn-primary btn-lg" href="downloads/SplitDroid-debug.apk" download>Скачать SplitDroid-debug.apk</a>
+      <p class="hint">Если Android спросит разрешение — разрешите установку из этого источника.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Раздельный туннель · com.novpn.splitdroid</p>
+  </footer>
+
+  <script src="landing.js"></script>
+</body>
+</html>

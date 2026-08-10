@@ -7,6 +7,47 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Android 11+ package visibility: required for addDisallowedApplication checks -->
+    <queries>
+        <package android:name="ru.sberbankmobile" />
+        <package android:name="ru.sberbank.sberbankid" />
+        <package android:name="com.idamob.tinkoff.android" />
+        <package android:name="ru.tinkoff.sme" />
+        <package android:name="ru.tinkoff.investing" />
+        <package android:name="ru.vtb24.mobilebanking.android" />
+        <package android:name="ru.alfabank.mobile.android" />
+        <package android:name="ru.gazprombank.android.mobilebank.app" />
+        <package android:name="ru.yandex.bank" />
+        <package android:name="com.yandex.bank" />
+        <package android:name="ru.yoomoney.app" />
+        <package android:name="ru.gosuslugi" />
+        <package android:name="ru.gosuslugi.goskey" />
+        <package android:name="ru.rt.mobile.gosuslugi" />
+        <package android:name="ru.rostel" />
+        <package android:name="ru.ozon.app.android" />
+        <package android:name="com.wildberries.ru" />
+        <package android:name="com.avito.android" />
+        <package android:name="ru.yandex.market" />
+        <package android:name="ru.yandex.taxi" />
+        <package android:name="ru.foodfox.client" />
+        <package android:name="com.yandex.browser" />
+        <package android:name="ru.yandex.mail" />
+        <package android:name="ru.yandex.yandexmaps" />
+        <package android:name="ru.yandex.disk" />
+        <package android:name="ru.yandex.androidkeyboard" />
+        <package android:name="com.yandex.searchapp" />
+        <package android:name="ru.mts.mymts" />
+        <package android:name="ru.mts.mtstv" />
+        <package android:name="ru.beeline.services" />
+        <package android:name="ru.megafon.mlk" />
+        <package android:name="ru.russianpost.android" />
+        <package android:name="ru.rzd.pass" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"

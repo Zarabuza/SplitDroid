@@ -2,14 +2,14 @@ package com.novpn.splitdroid
 
 object RussianServicesList {
     val services: List<RussianService> = listOf(
-        RussianService("Сбербанк", listOf("sberbank.ru", "sber.ru")),
+        RussianService("Сбербанк", listOf("sberbank.ru", "sber.ru", "sberbank.com", "online.sberbank.ru")),
         RussianService("Т-Банк", listOf("tbank.ru", "tinkoff.ru")),
-        RussianService("Госуслуги", listOf("gosuslugi.ru", "esia.gosuslugi.ru")),
-        RussianService("ВТБ", listOf("vtb.ru")),
-        RussianService("Альфа-Банк", listOf("alfabank.ru")),
+        RussianService("Госуслуги", listOf("gosuslugi.ru", "esia.gosuslugi.ru", "gosuslugi.com")),
+        RussianService("ВТБ", listOf("vtb.ru", "vtb24.ru")),
+        RussianService("Альфа-Банк", listOf("alfabank.ru", "alfa-bank.ru")),
         RussianService("Ozon", listOf("ozon.ru")),
-        RussianService("Wildberries", listOf("wildberries.ru")),
-        RussianService("Яндекс", listOf("yandex.ru", "ya.ru")),
+        RussianService("Wildberries", listOf("wildberries.ru", "wb.ru")),
+        RussianService("Яндекс", listOf("yandex.ru", "ya.ru", "yandex.com", "yandex.net")),
         RussianService("Авито", listOf("avito.ru")),
         RussianService("МТС", listOf("mts.ru")),
         RussianService("Билайн", listOf("beeline.ru")),

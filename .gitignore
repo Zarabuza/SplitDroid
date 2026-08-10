@@ -12,3 +12,7 @@
 *.aab
 app/build/
 **/build/
+
+web/downloads/*.apk
+local.properties
+

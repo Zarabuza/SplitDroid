@@ -52,7 +52,7 @@ class MainActivity : ComponentActivity() {
         if (granted) {
             startVpnService()
         } else {
-            viewModel.setRunning(false)
+            viewModel.markRunning(false)
         }
     }
 
@@ -95,14 +95,14 @@ class MainActivity : ComponentActivity() {
             }
         } else {
             stopService(Intent(this, SplitTunnelVpnService::class.java))
-            viewModel.setRunning(false)
+            viewModel.markRunning(false)
         }
     }
 
     private fun startVpnService() {
         val intent = Intent(this, SplitTunnelVpnService::class.java)
         startForegroundService(intent)
-        viewModel.setRunning(true)
+        viewModel.markRunning(true)
     }
 }
 
@@ -148,7 +148,7 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Российские сервисы работают без отключения VPN",
+            text = "Сбер, Госуслуги и другие российские приложения идут напрямую — вне туннеля",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -188,7 +188,17 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(48.dp))
 
         Text(
-            text = "Трафик на российские сервисы идёт напрямую. Остальной трафик — через ваш VPN.",
+            text = "Включите только этот туннель (без другого VPN). Android допускает лишь один VPN. Сбер, Госуслуги, Т‑Банк и другие из списка исключены из туннеля и ходят напрямую. Остальным приложениям DNS направляется так, чтобы российские домены резолвились вне туннеля.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.Gray,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Если включён коммерческий VPN — SplitDroid не сможет работать одновременно: отключите его, затем включите Раздельный туннель.",
             style = MaterialTheme.typography.bodySmall,
             color = Color.Gray,
             textAlign = TextAlign.Center,
