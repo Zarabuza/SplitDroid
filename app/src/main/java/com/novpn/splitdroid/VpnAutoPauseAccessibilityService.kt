@@ -62,23 +62,33 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
         val isLauncher = pkg in LAUNCHER_PACKAGES
         val paused = AutoPausePrefs.isPaused(this)
+        val isRu = RussianPackages.packages.contains(pkg)
         // Ignore Settings / permission UI noise, but NEVER ignore launchers when paused
         // (Home was previously ignored → restore never ran → stuck forever).
         if (pkg in NOISE_PACKAGES && !(paused && isLauncher)) return
         if (pkg == packageName) return
         if (shouldIgnoreAsNoise(pkg) && !isLauncher && !paused) return
 
-        if (pkg == lastForegroundPackage) return
-        val previous = lastForegroundPackage
-        lastForegroundPackage = pkg
-
-        val isRu = RussianPackages.packages.contains(pkg)
-        Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused")
-
-        when {
-            isRu -> onEnteredRussianApp(pkg, previous)
-            paused && !isSelectedVpnPackage(pkg) -> onLeftRussianApp(pkg)
+        // Duplicate window events: skip, BUT still allow RU re-entry kick when not paused.
+        // After kick-grace we revert lastForeground to the RU pkg; if VPN was restored and
+        // user opens the same app again without a clean leave event, the equality check
+        // would otherwise swallow the kick (manual opens often look like "same pkg").
+        if (pkg == lastForegroundPackage) {
+            if (!(isRu && !paused)) return
+            Log.d(TAG, "Re-entry same pkg=$pkg (not paused) — allow kick")
+        } else {
+            val previous = lastForegroundPackage
+            lastForegroundPackage = pkg
+            Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused")
+            when {
+                isRu -> onEnteredRussianApp(pkg, previous)
+                paused && !isSelectedVpnPackage(pkg) -> onLeftRussianApp(pkg)
+            }
+            return
         }
+
+        Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused (re-entry)")
+        onEnteredRussianApp(pkg, lastForegroundPackage)
     }
 
     override fun onInterrupt() = Unit
