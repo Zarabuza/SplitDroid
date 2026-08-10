@@ -34,6 +34,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
     private var lastForegroundPackage: String? = null
     private var lastBypassPackage: String? = null
     private var restoreClickSucceeded = false
+    private var connectClickInFlight = false
+    private var lastConnectClickAtMs = 0L
     private var fallbackRunnable: Runnable? = null
     private var returnHomeRunnable: Runnable? = null
     private var lastKickAtMs = 0L
@@ -132,6 +134,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         cancelReturnHome()
         AutoPausePrefs.setRestoring(this, false)
         restoreClickSucceeded = false
+        connectClickInFlight = false
         lastBypassPackage = pkg
 
         if (AutoPausePrefs.isPaused(this)) {
@@ -222,6 +225,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         AutoPausePrefs.setRestoring(this, true)
         AutoPausePrefs.setPaused(this, true)
         restoreClickSucceeded = false
+        connectClickInFlight = false
+        lastConnectClickAtMs = 0L
 
         try {
             startActivity(launchIntent)
@@ -284,28 +289,39 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
                 return
             }
 
+            // Avoid hammering Compose buttons on every CONTENT_CHANGED.
+            val now = System.currentTimeMillis()
+            if (connectClickInFlight || now - lastConnectClickAtMs < CONNECT_CLICK_COOLDOWN_MS) {
+                return
+            }
+
             val clicked = clickConnectButton(root)
             if (clicked) {
                 Log.i(TAG, "Auto-clicked Connect in VPN app — waiting for VPN")
+                connectClickInFlight = true
+                lastConnectClickAtMs = now
                 // Don't succeed until TRANSPORT_VPN appears (or UI shows disconnect).
                 handler.postDelayed({
                     if (restoreClickSucceeded) return@postDelayed
                     if (isVpnTransportActive()) {
                         onRestoreSucceeded()
-                    } else {
-                        val again = rootInActiveWindow
+                        return@postDelayed
+                    }
+                    val again = rootInActiveWindow
+                    try {
+                        if (again != null && vpnLooksAlreadyOn(again)) {
+                            onRestoreSucceeded()
+                        } else {
+                            // Allow another click attempt if VPN still off.
+                            connectClickInFlight = false
+                        }
+                    } finally {
                         try {
-                            if (again != null && vpnLooksAlreadyOn(again)) {
-                                onRestoreSucceeded()
-                            }
-                        } finally {
-                            try {
-                                again?.recycle()
-                            } catch (_: Exception) {
-                            }
+                            again?.recycle()
+                        } catch (_: Exception) {
                         }
                     }
-                }, 1200)
+                }, 1500)
             }
         } catch (e: Exception) {
             Log.w(TAG, "tryAutoClickConnect failed", e)
@@ -556,6 +572,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         private const val NOTIF_RESTORE = 2002
         private const val FALLBACK_MS = 13000L
         private const val KICK_GRACE_MS = 3000L
+        private const val CONNECT_CLICK_COOLDOWN_MS = 1800L
 
         const val PREFERRED_VPN_PACKAGE = "st.uboo.android.client"
 
