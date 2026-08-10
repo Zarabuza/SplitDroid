@@ -1,0 +1,1 @@
+# SplitDroid ProGuard rules
