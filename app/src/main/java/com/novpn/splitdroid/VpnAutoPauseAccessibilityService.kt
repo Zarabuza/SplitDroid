@@ -54,15 +54,19 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            type != AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
-            return
-        }
-
         val isLauncher = pkg in LAUNCHER_PACKAGES
         val paused = AutoPausePrefs.isPaused(this)
         val isRu = RussianPackages.packages.contains(pkg)
+
+        // HyperOS/MIUI often only emits CONTENT_CHANGED for manual icon taps;
+        // adb/monkey startActivity reliably gets WINDOW_STATE_CHANGED. Accept
+        // CONTENT_CHANGED for RU enter / leave-while-paused so manual opens kick.
+        val isWindowSwitch = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        val isContentHint = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            (isRu || (paused && (isLauncher || !isSelectedVpnPackage(pkg))))
+        if (!isWindowSwitch && !isContentHint) return
+
         // Ignore Settings / permission UI noise, but NEVER ignore launchers when paused
         // (Home was previously ignored → restore never ran → stuck forever).
         if (pkg in NOISE_PACKAGES && !(paused && isLauncher)) return
@@ -76,19 +80,17 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         if (pkg == lastForegroundPackage) {
             if (!(isRu && !paused)) return
             Log.d(TAG, "Re-entry same pkg=$pkg (not paused) — allow kick")
-        } else {
-            val previous = lastForegroundPackage
-            lastForegroundPackage = pkg
-            Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused")
-            when {
-                isRu -> onEnteredRussianApp(pkg, previous)
-                paused && !isSelectedVpnPackage(pkg) -> onLeftRussianApp(pkg)
-            }
+            onEnteredRussianApp(pkg, lastForegroundPackage)
             return
         }
 
-        Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused (re-entry)")
-        onEnteredRussianApp(pkg, lastForegroundPackage)
+        val previous = lastForegroundPackage
+        lastForegroundPackage = pkg
+        Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused type=$type")
+        when {
+            isRu -> onEnteredRussianApp(pkg, previous)
+            paused && !isSelectedVpnPackage(pkg) -> onLeftRussianApp(pkg)
+        }
     }
 
     override fun onInterrupt() = Unit
