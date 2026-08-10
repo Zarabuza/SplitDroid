@@ -2,6 +2,7 @@ package com.novpn.splitdroid
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.ActivityOptions
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -13,12 +14,14 @@ import android.graphics.Rect
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
@@ -230,7 +233,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION
                 )
             }
         if (launchIntent == null) {
@@ -247,23 +251,32 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         connectClickInFlight = false
         lastConnectClickAtMs = 0L
 
+        val noAnim = silentLaunchOptions()
         try {
-            startActivity(launchIntent)
+            if (noAnim != null) startActivity(launchIntent, noAnim)
+            else startActivity(launchIntent)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to launch VPN app $vpnPkg", e)
             AutoPausePrefs.setRestoring(this, false)
-            // Keep paused=true so next open of TG retries
             if (AutoPausePrefs.isNotifyFallback(this)) {
                 showRestoreNotification(null)
             }
             return
         }
 
-        listOf(500L, 1000L, 1600L, 2400L, 3500L, 5000L, 7000L, 9000L, 11000L).forEach { delay ->
+        // Click ASAP, then cover VPN UI with Telegram/YouTube so user barely sees it.
+        handler.postDelayed({ tryAutoClickConnect() }, 280)
+        handler.postDelayed({
+            if (!restoreClickSucceeded && AutoPausePrefs.isRestoring(this)) {
+                Log.d(TAG, "Covering VPN UI — returning to previous app")
+                returnToPreviousOrHome()
+            }
+        }, COVER_VPN_UI_MS)
+
+        listOf(500L, 900L, 1400L, 2000L, 2800L, 4000L, 5500L, 7500L, 9500L).forEach { delay ->
             handler.postDelayed({ tryAutoClickConnect() }, delay)
         }
-        // Also poll system VPN state — ЮБуст sometimes connects without a click we notice.
-        listOf(2000L, 4000L, 6000L, 8000L, 10000L).forEach { delay ->
+        listOf(1200L, 2500L, 4000L, 6000L, 8500L).forEach { delay ->
             handler.postDelayed({
                 if (!restoreClickSucceeded && AutoPausePrefs.isRestoring(this) && isVpnTransportActive()) {
                     Log.i(TAG, "System VPN became active during restore")
@@ -272,12 +285,30 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             }, delay)
         }
 
+        // Last resort: one brief VPN flash if still offline.
+        handler.postDelayed({
+            if (restoreClickSucceeded || !AutoPausePrefs.isRestoring(this) || isVpnTransportActive()) {
+                return@postDelayed
+            }
+            Log.i(TAG, "VPN still off — brief foreground connect pass")
+            try {
+                if (noAnim != null) startActivity(launchIntent, noAnim)
+                else startActivity(launchIntent)
+            } catch (e: Exception) {
+                Log.w(TAG, "Brief VPN relaunch failed", e)
+                return@postDelayed
+            }
+            handler.postDelayed({ tryAutoClickConnect() }, 350)
+            handler.postDelayed({
+                if (AutoPausePrefs.isRestoring(this)) returnToPreviousOrHome()
+            }, 700)
+        }, BRIEF_FOREGROUND_RETRY_MS)
+
         cancelFallback()
         val fallback = Runnable {
             if (restoreClickSucceeded) return@Runnable
             Log.w(TAG, "Silent connect click timed out — keeping paused for retry")
             AutoPausePrefs.setRestoring(this, false)
-            // Do NOT clear paused — next TG/YouTube open must retry
             if (AutoPausePrefs.isNotifyFallback(this)) {
                 showRestoreNotification(launchIntent)
             }
@@ -287,6 +318,43 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         handler.postDelayed(fallback, FALLBACK_MS)
     }
 
+    private fun silentLaunchOptions(): Bundle? {
+        return try {
+            ActivityOptions.makeCustomAnimation(this, 0, 0).toBundle()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Prefer VPN window even when Telegram is the active app. */
+    private fun findVpnRoot(): AccessibilityNodeInfo? {
+        val vpnPkg = AutoPausePrefs.vpnPackage(this)
+        try {
+            val active = rootInActiveWindow
+            if (active != null) {
+                val pkg = active.packageName?.toString()
+                if (vpnPkg.isBlank() || pkg == vpnPkg) return active
+            }
+        } catch (_: Exception) {
+        }
+
+        try {
+            for (window in windows.orEmpty()) {
+                val root = try {
+                    window.root
+                } catch (_: Exception) {
+                    null
+                } ?: continue
+                val pkg = root.packageName?.toString()
+                if (vpnPkg.isNotBlank() && pkg != vpnPkg) continue
+                if (pkg == vpnPkg || vpnPkg.isBlank()) return root
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "findVpnRoot windows failed", e)
+        }
+        return null
+    }
+
     private fun tryAutoClickConnect() {
         if (!AutoPausePrefs.isRestoring(this) || restoreClickSucceeded) return
         if (isVpnTransportActive()) {
@@ -294,21 +362,14 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             onRestoreSucceeded()
             return
         }
-        val root = rootInActiveWindow ?: return
+        val root = findVpnRoot() ?: return
         try {
-            val vpnPkg = AutoPausePrefs.vpnPackage(this)
-            val rootPkg = root.packageName?.toString()
-            if (vpnPkg.isNotBlank() && rootPkg != null && rootPkg != vpnPkg) {
-                return
-            }
-
             if (vpnLooksAlreadyOn(root)) {
                 Log.i(TAG, "VPN UI already connected — restore done")
                 onRestoreSucceeded()
                 return
             }
 
-            // Avoid hammering Compose buttons on every CONTENT_CHANGED.
             val now = System.currentTimeMillis()
             if (connectClickInFlight || now - lastConnectClickAtMs < CONNECT_CLICK_COOLDOWN_MS) {
                 return
@@ -319,42 +380,35 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
                 Log.i(TAG, "Auto-clicked Connect in VPN app — waiting for VPN")
                 connectClickInFlight = true
                 lastConnectClickAtMs = now
-                // Don't succeed until TRANSPORT_VPN appears (or UI shows disconnect).
+                returnToPreviousOrHome()
                 handler.postDelayed({
                     if (restoreClickSucceeded) return@postDelayed
                     if (isVpnTransportActive()) {
                         onRestoreSucceeded()
-                        return@postDelayed
-                    }
-                    val again = rootInActiveWindow
-                    try {
+                    } else {
+                        val again = findVpnRoot()
                         if (again != null && vpnLooksAlreadyOn(again)) {
                             onRestoreSucceeded()
                         } else {
-                            // Allow another click attempt if VPN still off.
                             connectClickInFlight = false
                         }
-                    } finally {
-                        // no recycle
                     }
-                }, 1500)
+                }, 1200)
             }
         } catch (e: Exception) {
             Log.w(TAG, "tryAutoClickConnect failed", e)
             connectClickInFlight = false
         }
-        // Do not recycle root — OEM trees crash if recycled while still referenced.
     }
 
     private fun onRestoreSucceeded() {
         restoreClickSucceeded = true
+        connectClickInFlight = false
         cancelFallback()
         AutoPausePrefs.setRestoring(this, false)
         AutoPausePrefs.setPaused(this, false)
         cancelReturnHome()
-        val go = Runnable { returnToPreviousOrHome() }
-        returnHomeRunnable = go
-        handler.postDelayed(go, 900)
+        returnToPreviousOrHome()
     }
 
     private fun vpnLooksAlreadyOn(root: AccessibilityNodeInfo): Boolean {
@@ -499,11 +553,17 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         if (returnPkg.isNotBlank()) {
             val intent = packageManager.getLaunchIntentForPackage(returnPkg)
                 ?.apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    )
                 }
             if (intent != null) {
                 try {
-                    startActivity(intent)
+                    val noAnim = silentLaunchOptions()
+                    if (noAnim != null) startActivity(intent, noAnim)
+                    else startActivity(intent)
                     return
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to return to $returnPkg", e)
@@ -586,6 +646,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         private const val FALLBACK_MS = 13000L
         private const val KICK_GRACE_MS = 3000L
         private const val CONNECT_CLICK_COOLDOWN_MS = 1800L
+        private const val COVER_VPN_UI_MS = 450L
+        private const val BRIEF_FOREGROUND_RETRY_MS = 3200L
 
         const val PREFERRED_VPN_PACKAGE = "st.uboo.android.client"
 
