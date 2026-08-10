@@ -80,6 +80,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.markNotificationsDone()
+        else viewModel.markNotificationsDone() // allow continue; FGS may still work
+        viewModel.refreshState()
+    }
+
     private var pendingStartTunnel = false
     private var pendingAutoPause = false
 
@@ -108,21 +116,29 @@ class MainActivity : ComponentActivity() {
                     if (viewModel.showSetupWizard) {
                         SetupWizardScreen(
                             step = viewModel.setupStep,
+                            notificationsGranted = viewModel.notificationsGranted,
                             restrictedDone = viewModel.restrictedSettingsDone,
                             accessibilityEnabled = viewModel.accessibilityEnabled,
+                            accessibilityCrashed = viewModel.accessibilityCrashed,
                             vpnPermissionGranted = viewModel.vpnPermissionGranted,
+                            batteryDone = viewModel.batteryMarkedDone,
+                            batteryIgnored = viewModel.batteryOptIgnored,
+                            autostartDone = viewModel.autostartMarkedDone,
                             vpnApps = viewModel.vpnApps,
                             selectedVpnPackage = viewModel.selectedVpnPackage,
-                            onOpenAppInfo = { openAppInfoForRestrictedSettings() },
-                            onMarkRestrictedDone = {
-                                viewModel.markRestrictedDone()
-                            },
+                            onRequestNotifications = { requestNotificationPermission() },
+                            onOpenAppInfo = { safeStart(PermissionIntents.appInfo(this)) },
+                            onMarkRestrictedDone = { viewModel.markRestrictedDone() },
                             onOpenAccessibility = { openAccessibilitySettings() },
                             onRequestVpn = { ensureVpnPermissionForAutoPause() },
                             onSelectVpn = { viewModel.selectVpnApp(it) },
+                            onOpenBattery = { openBatteryOptimizationSettings() },
+                            onOpenMiuiBattery = { openMiuiBattery() },
+                            onMarkBatteryDone = { viewModel.markBatteryDone() },
+                            onOpenAutostart = { openAutostart() },
+                            onMarkAutostartDone = { viewModel.markAutostartDone() },
                             onFinish = {
                                 viewModel.completeWizard()
-                                viewModel.updateAutoPauseEnabled(true)
                                 pendingAutoPause = true
                                 ensureVpnPermissionForAutoPause()
                             }
@@ -163,15 +179,32 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun maybeFinishWizard() {
-        if (viewModel.showSetupWizard &&
-            viewModel.restrictedSettingsDone &&
-            viewModel.accessibilityEnabled &&
-            viewModel.vpnPermissionGranted &&
-            viewModel.selectedVpnPackage.isNotBlank()
-        ) {
-            viewModel.completeWizard()
-            viewModel.updateAutoPauseEnabled(true)
+        // Wizard finishes only via explicit Finish button after all steps.
+    }
+
+    private fun requestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            viewModel.markNotificationsDone()
         }
+    }
+
+    private fun safeStart(intent: Intent) {
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun openMiuiBattery() {
+        val intent = PermissionIntents.miuiBatterySaver(this)
+        if (intent != null) safeStart(intent) else openBatteryOptimizationSettings()
+    }
+
+    private fun openAutostart() {
+        val intent = PermissionIntents.miuiAutostart(this)
+        if (intent != null) safeStart(intent) else safeStart(PermissionIntents.appInfo(this))
     }
 
     private fun onTunnelChanged(enabled: Boolean) {
@@ -207,32 +240,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openAppInfoForRestrictedSettings() {
-        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.fromParts("package", packageName, null)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(intent)
-    }
-
     private fun openBatteryOptimizationSettings() {
         try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
+            startActivity(PermissionIntents.ignoreBatteryOptimizations(this))
         } catch (_: Exception) {
             try {
-                startActivity(
-                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                )
+                startActivity(PermissionIntents.batteryOptimizationList())
             } catch (_: Exception) {
-                openAppInfoForRestrictedSettings()
+                safeStart(PermissionIntents.appInfo(this))
             }
         }
+    }
+
+    private fun openAppInfoForRestrictedSettings() {
+        safeStart(PermissionIntents.appInfo(this))
     }
 
     private fun ensureVpnPermissionForAutoPause() {
@@ -294,24 +315,38 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SetupWizardScreen(
     step: Int,
+    notificationsGranted: Boolean,
     restrictedDone: Boolean,
     accessibilityEnabled: Boolean,
+    accessibilityCrashed: Boolean,
     vpnPermissionGranted: Boolean,
+    batteryDone: Boolean,
+    batteryIgnored: Boolean,
+    autostartDone: Boolean,
     vpnApps: List<VpnAppInfo>,
     selectedVpnPackage: String,
+    onRequestNotifications: () -> Unit,
     onOpenAppInfo: () -> Unit,
     onMarkRestrictedDone: () -> Unit,
     onOpenAccessibility: () -> Unit,
     onRequestVpn: () -> Unit,
     onSelectVpn: (VpnAppInfo) -> Unit,
+    onOpenBattery: () -> Unit,
+    onOpenMiuiBattery: () -> Unit,
+    onMarkBatteryDone: () -> Unit,
+    onOpenAutostart: () -> Unit,
+    onMarkAutostartDone: () -> Unit,
     onFinish: () -> Unit
 ) {
     val current = when {
-        !restrictedDone -> 1
-        !accessibilityEnabled -> 2
-        !vpnPermissionGranted || selectedVpnPackage.isBlank() -> 3
-        else -> 3
-    }.coerceAtLeast(step)
+        !notificationsGranted -> 1
+        !restrictedDone -> 2
+        !accessibilityEnabled || accessibilityCrashed -> 3
+        !vpnPermissionGranted || selectedVpnPackage.isBlank() -> 4
+        !batteryDone -> 5
+        !autostartDone -> 6
+        else -> 7
+    }.coerceAtLeast(step).coerceAtMost(7)
 
     Column(
         modifier = Modifier
@@ -320,104 +355,95 @@ fun SetupWizardScreen(
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "Быстрая настройка",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center
-        )
+        Text("Настройка разрешений", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Нужно 2 системных разрешения — без них автопауза VPN не работает. Android требует это вручную.",
+            "Без этих пунктов HyperOS убивает слежение. Каждый шаг открывает нужный экран.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
-
-        Spacer(modifier = Modifier.height(24.dp))
-        StepDots(current = current, total = 3)
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
+        StepDots(current = current.coerceAtMost(6), total = 6)
+        Spacer(modifier = Modifier.height(20.dp))
 
         when {
-            !restrictedDone -> {
+            !notificationsGranted -> WizardCard(
+                step = 1, title = "Уведомления",
+                body = "Нужны для постоянного уведомления «активен». Без него Xiaomi чистит процесс.",
+                primary = "Разрешить уведомления", onPrimary = onRequestNotifications,
+                secondary = "Пропустить", onSecondary = onRequestNotifications
+            )
+            !restrictedDone -> WizardCard(
+                step = 2, title = "Ограниченные настройки",
+                body = "Сведения о приложении → ⋮ сверху справа → «Разрешить настройки с ограниченным доступом».",
+                primary = "Открыть сведения о приложении", onPrimary = onOpenAppInfo,
+                secondary = "Готово — разрешил", onSecondary = onMarkRestrictedDone
+            )
+            !accessibilityEnabled || accessibilityCrashed -> WizardCard(
+                step = 3,
+                title = if (accessibilityCrashed) "Спец. возможности убиты — включи снова" else "Спец. возможности",
+                body = if (accessibilityCrashed)
+                    "Выключи и снова включи «Раздельный туннель». Иначе kick/restore не работают."
+                else
+                    "Включи службу «Раздельный туннель». Xiaomi: Скачанные приложения → Раздельный туннель.",
+                primary = "Открыть спец. возможности", onPrimary = onOpenAccessibility,
+                secondary = null, onSecondary = null,
+                hint = "После включения вернись — шаг отметится сам."
+            )
+            !vpnPermissionGranted || selectedVpnPackage.isBlank() -> {
                 WizardCard(
-                    step = 1,
-                    title = "Разрешить ограниченные настройки",
-                    body = "APK не из Play Store блокируется. Откройте сведения о приложении → нажмите ⋮ справа сверху → «Разрешить настройки с ограниченным доступом».",
-                    primary = "Открыть сведения о приложении",
-                    onPrimary = onOpenAppInfo,
-                    secondary = "Готово — я разрешил",
-                    onSecondary = onMarkRestrictedDone
-                )
-            }
-            !accessibilityEnabled -> {
-                WizardCard(
-                    step = 2,
-                    title = "Включить спец. возможности",
-                    body = "Откройте службу «Раздельный туннель» и включите переключатель. На Xiaomi: Скачанные приложения → Раздельный туннель.",
-                    primary = "Открыть спец. возможности",
-                    onPrimary = onOpenAccessibility,
-                    secondary = null,
-                    onSecondary = null,
-                    hint = "Вернитесь сюда после включения — шаг отметится сам."
-                )
-            }
-            else -> {
-                WizardCard(
-                    step = 3,
-                    title = "VPN и приложение для возврата",
-                    body = "Один раз разрешите VPN (нужно, чтобы сбрасывать чужой туннель). Выберите VPN, который будем включать обратно (например ЮБуст).",
+                    step = 4, title = "VPN + какое VPN возвращать",
+                    body = "Разреши VPN один раз (для сброса чужого). Выбери ЮБуст для обратного включения.",
                     primary = if (!vpnPermissionGranted) "Разрешить VPN" else null,
                     onPrimary = if (!vpnPermissionGranted) onRequestVpn else null,
-                    secondary = null,
-                    onSecondary = null
+                    secondary = null, onSecondary = null
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Какой VPN возвращать после банка?",
-                    style = MaterialTheme.typography.titleSmall
-                )
-                Spacer(modifier = Modifier.height(8.dp))
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (vpnApps.isEmpty()) {
-                        Text(
-                            text = "Установите ЮБуст или другой VPN, затем вернитесь.",
-                            color = Color.Gray,
-                            textAlign = TextAlign.Center
+                    vpnApps.forEach { app ->
+                        FilterChip(
+                            selected = app.packageName == selectedVpnPackage,
+                            onClick = { onSelectVpn(app) },
+                            label = { Text(app.label) }
                         )
-                    } else {
-                        vpnApps.forEach { app ->
-                            FilterChip(
-                                selected = app.packageName == selectedVpnPackage,
-                                onClick = { onSelectVpn(app) },
-                                label = { Text(app.label) }
-                            )
-                        }
                     }
+                    if (vpnApps.isEmpty()) Text("Установи ЮБуст и вернись", color = Color.Gray)
                 }
-                Spacer(modifier = Modifier.height(20.dp))
-                val canFinish = vpnPermissionGranted && selectedVpnPackage.isNotBlank()
-                Button(
-                    onClick = onFinish,
-                    enabled = canFinish,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Готово — включить автопаузу")
-                }
-                if (!canFinish) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Сначала разрешите VPN и выберите приложение.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center
-                    )
-                }
+            }
+            !batteryDone -> WizardCard(
+                step = 5, title = "Батарея без ограничений",
+                body = "Иначе HyperOS OneKeyClean снова убьёт слежение.",
+                primary = "Разрешить без ограничений", onPrimary = onOpenBattery,
+                secondary = "Готово", onSecondary = onMarkBatteryDone,
+                hint = if (batteryIgnored) "Система уже разрешила — жми Готово." else "Можно также: Экран MIUI батареи ниже."
+            )
+            !autostartDone -> WizardCard(
+                step = 6, title = "Автозапуск Xiaomi",
+                body = "В автозапуске включи «Раздельный туннель». Иначе после очистки снова умрёт.",
+                primary = "Открыть автозапуск", onPrimary = onOpenAutostart,
+                secondary = "Готово — включил", onSecondary = onMarkAutostartDone
+            )
+            else -> {
+                WizardCard(
+                    step = 6, title = "Всё готово",
+                    body = "Автопауза: банк → VPN off, Telegram/YouTube → VPN on. Не смахивай уведомление «активен».",
+                    primary = "Включить автопаузу", onPrimary = onFinish,
+                    secondary = null, onSecondary = null
+                )
+            }
+        }
+        if (!batteryDone && notificationsGranted && restrictedDone &&
+            accessibilityEnabled && !accessibilityCrashed &&
+            vpnPermissionGranted && selectedVpnPackage.isNotBlank()
+        ) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenMiuiBattery, modifier = Modifier.fillMaxWidth()) {
+                Text("Открыть экран батареи MIUI")
             }
         }
     }
