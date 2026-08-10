@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Раздельный туннель</string>
-    <string name="accessibility_service_description">В фоне следит за банками и Госуслугами: при входе сбрасывает чужой VPN, при выходе тихо открывает ваше VPN‑приложение и нажимает «Подключить».</string>
+    <string name="accessibility_service_description">В фоне: в приложениях «без VPN» сбрасывает чужой VPN; в приложениях вроде Telegram/YouTube тихо включает выбранный VPN и жмёт «Подключить». С Home VPN сам не включается.</string>
     <string name="auto_pause_channel">Автопауза VPN</string>
     <string name="auto_pause_kick_title">Пауза VPN</string>
-    <string name="auto_pause_kick_text">Сброс активного VPN для банка…</string>
-    <string name="auto_pause_paused_title">VPN отключён для российского приложения</string>
-    <string name="auto_pause_paused_text">После выхода VPN включится автоматически</string>
+    <string name="auto_pause_kick_text">Сброс активного VPN…</string>
+    <string name="auto_pause_paused_title">VPN отключён</string>
+    <string name="auto_pause_paused_text">Включится при входе в приложение из списка «нужен VPN»</string>
     <string name="auto_pause_restore_title">Включите VPN снова</string>
     <string name="auto_pause_restore_text">Не удалось нажать «Подключить» автоматически — откройте VPN</string>
 </resources>

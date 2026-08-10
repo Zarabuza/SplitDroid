@@ -41,7 +41,14 @@
         <package android:name="ru.megafon.mlk" />
         <package android:name="ru.russianpost.android" />
         <package android:name="ru.rzd.pass" />
-        <package android:name="st.uboo.android.client" />
+                        <package android:name="st.uboo.android.client" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="org.telegram.messenger.web" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.apps.youtube.music" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.instagram.android" />
+        <package android:name="com.discord" />
         <package android:name="org.outline.android.client" />
         <package android:name="com.v2ray.ang" />
         <package android:name="org.amnezia.vpn" />

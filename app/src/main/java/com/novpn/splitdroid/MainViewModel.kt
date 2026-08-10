@@ -41,6 +41,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var notifyFallback by mutableStateOf(false)
         private set
 
+    var bypassApps by mutableStateOf<List<LaunchableApp>>(emptyList())
+        private set
+
+    var vpnNeededApps by mutableStateOf<List<LaunchableApp>>(emptyList())
+        private set
+
+    var allLaunchableApps by mutableStateOf<List<LaunchableApp>>(emptyList())
+        private set
+
     var showSetupWizard by mutableStateOf(true)
         private set
 
@@ -80,6 +89,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         notifyFallback = AutoPausePrefs.isNotifyFallback(context)
         vpnApps = VpnAppScanner.listVpnApps(context)
         restrictedSettingsDone = SetupPrefs.isRestrictedDone(context)
+        AutoPausePrefs.ensureListsInitialized(context)
+
+        if (allLaunchableApps.isEmpty()) {
+            allLaunchableApps = InstalledAppsScanner.listLaunchableApps(context)
+        }
+        val installedByPkg = allLaunchableApps.associateBy { it.packageName }
+        bypassApps = AutoPausePrefs.bypassPackages(context)
+            .map { pkg -> installedByPkg[pkg] ?: LaunchableApp(pkg, InstalledAppsScanner.labelFor(context, pkg)) }
+            .let { list ->
+                val installed = list.filter { installedByPkg.containsKey(it.packageName) }
+                val missing = list.filterNot { installedByPkg.containsKey(it.packageName) }
+                (installed + missing).sortedBy { it.label.lowercase() }
+            }
+        vpnNeededApps = AutoPausePrefs.vpnNeededPackages(context)
+            .map { pkg -> installedByPkg[pkg] ?: LaunchableApp(pkg, InstalledAppsScanner.labelFor(context, pkg)) }
+            .let { list ->
+                val installed = list.filter { installedByPkg.containsKey(it.packageName) }
+                val missing = list.filterNot { installedByPkg.containsKey(it.packageName) }
+                (installed + missing).sortedBy { it.label.lowercase() }
+            }
 
         selectedVpnPackage = AutoPausePrefs.vpnPackage(context)
         if (selectedVpnPackage.isBlank()) {
@@ -101,7 +130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             !vpnPermissionGranted -> "Нужно разрешение VPN (один раз)"
             selectedVpnPackage.isBlank() -> "Выберите VPN для возврата"
             AutoPausePrefs.isRestoring(context) -> "Тихо включает VPN…"
-            AutoPausePrefs.isPaused(context) -> "Пауза · VPN сброшен для банка"
+            AutoPausePrefs.isPaused(context) -> "Пауза · VPN сброшен (ждёт TG/YouTube…)"
             else -> "Следит в фоне"
         }
 
@@ -172,6 +201,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         AutoPausePrefs.setVpnPackage(context, info.packageName)
         selectedVpnPackage = info.packageName
         selectedVpnLabel = info.label
+        refreshState()
+    }
+
+    fun addBypassApp(packageName: String) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.addBypassPackage(context, packageName)
+        refreshState()
+    }
+
+    fun removeBypassApp(packageName: String) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.removeBypassPackage(context, packageName)
+        refreshState()
+    }
+
+    fun addVpnNeededApp(packageName: String) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.addVpnNeededPackage(context, packageName)
+        refreshState()
+    }
+
+    fun removeVpnNeededApp(packageName: String) {
+        val context = getApplication<Application>()
+        AutoPausePrefs.removeVpnNeededPackage(context, packageName)
+        refreshState()
+    }
+
+    fun reloadInstalledApps() {
+        val context = getApplication<Application>()
+        allLaunchableApps = InstalledAppsScanner.listLaunchableApps(context)
         refreshState()
     }
 

@@ -45,6 +45,12 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -131,6 +137,9 @@ class MainActivity : ComponentActivity() {
                             selectedVpnLabel = viewModel.selectedVpnLabel,
                             selectedVpnPackage = viewModel.selectedVpnPackage,
                             vpnApps = viewModel.vpnApps,
+                            bypassApps = viewModel.bypassApps,
+                            vpnNeededApps = viewModel.vpnNeededApps,
+                            allLaunchableApps = viewModel.allLaunchableApps,
                             notifyFallback = viewModel.notifyFallback,
                             onToggleTunnel = { enabled -> onTunnelChanged(enabled) },
                             onToggleAutoPause = { enabled -> onAutoPauseChanged(enabled) },
@@ -138,7 +147,12 @@ class MainActivity : ComponentActivity() {
                             onOpenAccessibility = { openAccessibilitySettings() },
                             onOpenSetup = { viewModel.reopenWizard() },
                             onSelectVpn = { viewModel.selectVpnApp(it) },
-                            onRequestVpnPermission = { ensureVpnPermissionForAutoPause() }
+                            onRequestVpnPermission = { ensureVpnPermissionForAutoPause() },
+                            onAddBypass = { viewModel.addBypassApp(it) },
+                            onRemoveBypass = { viewModel.removeBypassApp(it) },
+                            onAddVpnNeeded = { viewModel.addVpnNeededApp(it) },
+                            onRemoveVpnNeeded = { viewModel.removeVpnNeededApp(it) },
+                            onReloadApps = { viewModel.reloadInstalledApps() }
                         )
                     }
                 }
@@ -475,6 +489,9 @@ fun MainScreen(
     selectedVpnLabel: String,
     selectedVpnPackage: String,
     vpnApps: List<VpnAppInfo>,
+    bypassApps: List<LaunchableApp>,
+    vpnNeededApps: List<LaunchableApp>,
+    allLaunchableApps: List<LaunchableApp>,
     notifyFallback: Boolean,
     onToggleTunnel: (Boolean) -> Unit,
     onToggleAutoPause: (Boolean) -> Unit,
@@ -482,9 +499,15 @@ fun MainScreen(
     onOpenAccessibility: () -> Unit,
     onOpenSetup: () -> Unit,
     onSelectVpn: (VpnAppInfo) -> Unit,
-    onRequestVpnPermission: () -> Unit
+    onRequestVpnPermission: () -> Unit,
+    onAddBypass: (String) -> Unit,
+    onRemoveBypass: (String) -> Unit,
+    onAddVpnNeeded: (String) -> Unit,
+    onRemoveVpnNeeded: (String) -> Unit,
+    onReloadApps: () -> Unit
 ) {
     val shieldTint = if (autoPauseEnabled || isRunning) Color(0xFF2E7D32) else Color(0xFF9E9E9E)
+    var addTarget by remember { mutableStateOf<AppListTarget?>(null) }
 
     Column(
         modifier = Modifier
@@ -513,7 +536,7 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "Автопауза чужого VPN в фоне: банк → сброс, выход → тихое включение",
+            text = "Банк/Госуслуги → VPN сброс. Telegram/YouTube → VPN снова. Home ничего не включает.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
@@ -556,7 +579,7 @@ fun MainScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            text = "VPN для тихого возврата: $selectedVpnLabel",
+            text = "VPN‑клиент для включения: $selectedVpnLabel",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center
         )
@@ -582,6 +605,34 @@ fun MainScreen(
                 }
             }
         }
+
+        Spacer(modifier = Modifier.height(20.dp))
+        HorizontalDivider()
+        Spacer(modifier = Modifier.height(16.dp))
+
+        AppRouteListBlock(
+            title = "Без VPN",
+            subtitle = "При входе VPN сбрасывается. Нажми чип, чтобы убрать.",
+            apps = bypassApps,
+            onRemove = onRemoveBypass,
+            onAddClick = {
+                onReloadApps()
+                addTarget = AppListTarget.Bypass
+            }
+        )
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        AppRouteListBlock(
+            title = "Нужен VPN",
+            subtitle = "При входе (TG, YouTube…) VPN тихо включается. Не с Home.",
+            apps = vpnNeededApps,
+            onRemove = onRemoveVpnNeeded,
+            onAddClick = {
+                onReloadApps()
+                addTarget = AppListTarget.VpnNeeded
+            }
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
         Row(
@@ -620,19 +671,139 @@ fun MainScreen(
             onCheckedChange = onToggleTunnel
         )
         Text(text = statusText, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-
-        Spacer(modifier = Modifier.height(20.dp))
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            RussianServicesList.services.forEach { service ->
-                AssistChip(onClick = {}, label = { Text(service.name) })
-            }
-        }
         Spacer(modifier = Modifier.height(16.dp))
     }
+
+    val target = addTarget
+    if (target != null) {
+        val selected = when (target) {
+            AppListTarget.Bypass -> bypassApps.map { it.packageName }.toSet()
+            AppListTarget.VpnNeeded -> vpnNeededApps.map { it.packageName }.toSet()
+        }
+        AddAppDialog(
+            title = when (target) {
+                AppListTarget.Bypass -> "Добавить в «Без VPN»"
+                AppListTarget.VpnNeeded -> "Добавить в «Нужен VPN»"
+            },
+            apps = allLaunchableApps,
+            alreadySelected = selected,
+            onDismiss = { addTarget = null },
+            onPick = { pkg ->
+                when (target) {
+                    AppListTarget.Bypass -> onAddBypass(pkg)
+                    AppListTarget.VpnNeeded -> onAddVpnNeeded(pkg)
+                }
+                addTarget = null
+            }
+        )
+    }
+}
+
+private enum class AppListTarget { Bypass, VpnNeeded }
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AppRouteListBlock(
+    title: String,
+    subtitle: String,
+    apps: List<LaunchableApp>,
+    onRemove: (String) -> Unit,
+    onAddClick: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        Spacer(modifier = Modifier.height(10.dp))
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            apps.take(40).forEach { app ->
+                AssistChip(
+                    onClick = { onRemove(app.packageName) },
+                    label = { Text(app.label) }
+                )
+            }
+            if (apps.size > 40) {
+                Text(
+                    text = "+ ещё ${apps.size - 40}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                    modifier = Modifier.align(Alignment.CenterVertically)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedButton(onClick = onAddClick, modifier = Modifier.fillMaxWidth()) {
+            Text("Добавить приложение")
+        }
+    }
+}
+
+@Composable
+private fun AddAppDialog(
+    title: String,
+    apps: List<LaunchableApp>,
+    alreadySelected: Set<String>,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(apps, query, alreadySelected) {
+        apps.asSequence()
+            .filter { it.packageName !in alreadySelected }
+            .filter {
+                query.isBlank() ||
+                    it.label.contains(query, ignoreCase = true) ||
+                    it.packageName.contains(query, ignoreCase = true)
+            }
+            .take(80)
+            .toList()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Поиск") }
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    filtered.forEach { app ->
+                        TextButton(
+                            onClick = { onPick(app.packageName) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = app.label,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Start
+                            )
+                        }
+                    }
+                    if (filtered.isEmpty()) {
+                        Text("Ничего не найдено", color = Color.Gray)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Закрыть") }
+        }
+    )
 }
 
 @Composable

@@ -21,18 +21,19 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
 /**
- * Background watcher: kick third-party VPN on Russian bank/gov apps;
- * on leave (including Home/launcher), silently launch VPN and auto-click Connect.
+ * Background watcher:
+ * - Enter app from "без VPN" list → kick third-party VPN
+ * - Enter app from "нужен VPN" list (TG, YouTube, …) → silent restore + Connect
+ * - Home / other apps → do nothing (VPN stays off until a "нужен VPN" app)
  */
 class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private var lastForegroundPackage: String? = null
-    private var lastRussianPackage: String? = null
+    private var lastBypassPackage: String? = null
     private var restoreClickSucceeded = false
     private var fallbackRunnable: Runnable? = null
     private var returnHomeRunnable: Runnable? = null
-    private var graceCheckRunnable: Runnable? = null
     private var lastKickAtMs = 0L
     private var lastRestoreAtMs = 0L
 
@@ -56,40 +57,52 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
         val isLauncher = pkg in LAUNCHER_PACKAGES
         val paused = AutoPausePrefs.isPaused(this)
-        val isRu = RussianPackages.packages.contains(pkg)
+        val isBypass = AutoPausePrefs.isBypassPackage(this, pkg)
+        val isVpnNeeded = AutoPausePrefs.isVpnNeededPackage(this, pkg)
 
         // HyperOS/MIUI often only emits CONTENT_CHANGED for manual icon taps;
-        // adb/monkey startActivity reliably gets WINDOW_STATE_CHANGED. Accept
-        // CONTENT_CHANGED for RU enter / leave-while-paused so manual opens kick.
+        // adb/monkey startActivity reliably gets WINDOW_STATE_CHANGED.
         val isWindowSwitch = type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
         val isContentHint = type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-            (isRu || (paused && (isLauncher || !isSelectedVpnPackage(pkg))))
+            (isBypass || isVpnNeeded)
         if (!isWindowSwitch && !isContentHint) return
 
-        // Ignore Settings / permission UI noise, but NEVER ignore launchers when paused
-        // (Home was previously ignored → restore never ran → stuck forever).
-        if (pkg in NOISE_PACKAGES && !(paused && isLauncher)) return
-        if (pkg == packageName) return
-        if (shouldIgnoreAsNoise(pkg) && !isLauncher && !paused) return
+        // Content events can arrive from non-foreground windows — require match.
+        if (isContentHint && !isWindowSwitch) {
+            val active = rootInActiveWindow?.packageName?.toString()
+            if (active != null && active != pkg) return
+        }
 
-        // Duplicate window events: skip, BUT still allow RU re-entry kick when not paused.
-        // After kick-grace we revert lastForeground to the RU pkg; if VPN was restored and
-        // user opens the same app again without a clean leave event, the equality check
-        // would otherwise swallow the kick (manual opens often look like "same pkg").
-        if (pkg == lastForegroundPackage) {
-            if (!(isRu && !paused)) return
-            Log.d(TAG, "Re-entry same pkg=$pkg (not paused) — allow kick")
-            onEnteredRussianApp(pkg, lastForegroundPackage)
+        if (pkg in NOISE_PACKAGES) return
+        if (pkg == packageName) return
+        if (shouldIgnoreAsNoise(pkg) && !isLauncher && !isBypass && !isVpnNeeded) return
+        // Home / launcher: never auto-restore VPN (restore only via "нужен VPN" apps)
+        if (isLauncher) {
+            lastForegroundPackage = pkg
             return
         }
 
-        val previous = lastForegroundPackage
+        // Duplicate events: still allow bypass re-kick / vpn-needed restore when sticky.
+        if (pkg == lastForegroundPackage) {
+            when {
+                isBypass && !paused -> {
+                    Log.d(TAG, "Re-entry bypass pkg=$pkg — allow kick")
+                    onEnteredBypassApp(pkg)
+                }
+                isVpnNeeded && paused -> {
+                    Log.d(TAG, "Re-entry vpn-needed pkg=$pkg while paused — restore")
+                    onEnteredVpnNeededApp(pkg)
+                }
+            }
+            return
+        }
+
         lastForegroundPackage = pkg
-        Log.d(TAG, "foreground=$pkg ru=$isRu paused=$paused type=$type")
+        Log.d(TAG, "foreground=$pkg bypass=$isBypass needVpn=$isVpnNeeded paused=$paused type=$type")
         when {
-            isRu -> onEnteredRussianApp(pkg, previous)
-            paused && !isSelectedVpnPackage(pkg) -> onLeftRussianApp(pkg)
+            isBypass -> onEnteredBypassApp(pkg)
+            isVpnNeeded -> onEnteredVpnNeededApp(pkg)
         }
     }
 
@@ -97,6 +110,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        AutoPausePrefs.ensureListsInitialized(this)
         Log.i(TAG, "Accessibility connected; autoPause=${AutoPausePrefs.isEnabled(this)}")
         // Clear sticky stuck flags from older buggy builds
         if (!AutoPausePrefs.isEnabled(this)) {
@@ -108,25 +122,15 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         cancelFallback()
         cancelReturnHome()
-        cancelGraceCheck()
         super.onDestroy()
     }
 
-    private fun onEnteredRussianApp(pkg: String, previous: String?) {
+    private fun onEnteredBypassApp(pkg: String) {
         cancelFallback()
         cancelReturnHome()
-        cancelGraceCheck()
         AutoPausePrefs.setRestoring(this, false)
         restoreClickSucceeded = false
-        lastRussianPackage = pkg
-
-        val returnPkg = previous
-            ?.takeIf { it.isNotBlank() && it !in NOISE_PACKAGES && it !in LAUNCHER_PACKAGES }
-            ?.takeIf { !isSelectedVpnPackage(it) }
-            ?.takeIf { !RussianPackages.packages.contains(it) }
-        if (!returnPkg.isNullOrBlank()) {
-            AutoPausePrefs.setReturnPackage(this, returnPkg)
-        }
+        lastBypassPackage = pkg
 
         if (AutoPausePrefs.isPaused(this)) {
             Log.d(TAG, "Already paused; stay paused for $pkg")
@@ -140,22 +144,29 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         }
         lastKickAtMs = now
 
-        Log.i(TAG, "Russian app foreground: $pkg — kicking VPN")
+        Log.i(TAG, "Bypass app foreground: $pkg — kicking VPN")
         AutoPausePrefs.setPaused(this, true)
         VpnKickService.start(this)
-        schedulePostKickGraceCheck()
     }
 
-    private fun onLeftRussianApp(pkg: String) {
-        if (!AutoPausePrefs.isPaused(this)) return
+    private fun onEnteredVpnNeededApp(pkg: String) {
+        // After connecting, return to this app (TG / YouTube), not Home.
+        AutoPausePrefs.setReturnPackage(this, pkg)
+
+        if (!AutoPausePrefs.isPaused(this)) {
+            Log.d(TAG, "VPN-needed app $pkg but not paused — leave alone")
+            return
+        }
         if (AutoPausePrefs.isRestoring(this)) return
 
         val now = System.currentTimeMillis()
-        // Xiaomi often emits a brief launcher window right after kick/VPN revoke — ignore it.
         if (now - lastKickAtMs < KICK_GRACE_MS) {
-            Log.d(TAG, "Restore skipped: within kick grace ($pkg)")
-            // Keep Russian app as "current" so a real later Home still counts as a leave.
-            lastRussianPackage?.let { lastForegroundPackage = it }
+            Log.d(TAG, "Restore deferred: within kick grace ($pkg)")
+            handler.postDelayed({
+                if (AutoPausePrefs.isPaused(this) && !AutoPausePrefs.isRestoring(this)) {
+                    onEnteredVpnNeededApp(pkg)
+                }
+            }, KICK_GRACE_MS - (now - lastKickAtMs) + 50L)
             return
         }
         if (now - lastRestoreAtMs < 2000L) {
@@ -164,29 +175,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         }
         lastRestoreAtMs = now
 
-        Log.i(TAG, "Left Russian app; foreground=$pkg — silent VPN restore")
-        // Keep paused=true until restore finishes or fails, so we don't double-fire
+        Log.i(TAG, "VPN-needed app foreground: $pkg — silent VPN restore")
         startSilentRestore()
-    }
-
-    /** If user left for real during kick grace, catch up once grace ends. */
-    private fun schedulePostKickGraceCheck() {
-        cancelGraceCheck()
-        val check = Runnable {
-            if (!AutoPausePrefs.isPaused(this) || AutoPausePrefs.isRestoring(this)) return@Runnable
-            val activePkg = rootInActiveWindow?.packageName?.toString()
-                ?: lastForegroundPackage
-                ?: return@Runnable
-            if (RussianPackages.packages.contains(activePkg) || isSelectedVpnPackage(activePkg)) {
-                lastForegroundPackage = activePkg
-                return@Runnable
-            }
-            lastForegroundPackage = activePkg
-            Log.i(TAG, "Post-kick grace: still away from RU ($activePkg) — restore")
-            onLeftRussianApp(activePkg)
-        }
-        graceCheckRunnable = check
-        handler.postDelayed(check, KICK_GRACE_MS + 200L)
     }
 
     private fun startSilentRestore() {
@@ -502,11 +492,6 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
     private fun cancelReturnHome() {
         returnHomeRunnable?.let { handler.removeCallbacks(it) }
         returnHomeRunnable = null
-    }
-
-    private fun cancelGraceCheck() {
-        graceCheckRunnable?.let { handler.removeCallbacks(it) }
-        graceCheckRunnable = null
     }
 
     companion object {
