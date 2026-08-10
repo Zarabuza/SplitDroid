@@ -21,15 +21,30 @@ object SetupPrefs {
         prefs(context).edit().putBoolean(KEY_RESTRICTED_DONE, done).apply()
     }
 
-    fun isWizardDone(context: Context): Boolean =
-        prefs(context).getBoolean(KEY_WIZARD_DONE, false) &&
+    fun isWizardDone(context: Context): Boolean {
+        migrateIfNeeded(context)
+        return prefs(context).getBoolean(KEY_WIZARD_DONE, false) &&
             prefs(context).getInt(KEY_WIZARD_VERSION, 0) >= CURRENT_WIZARD_VERSION
+    }
 
     fun setWizardDone(context: Context, done: Boolean) {
         prefs(context).edit()
             .putBoolean(KEY_WIZARD_DONE, done)
             .putInt(KEY_WIZARD_VERSION, if (done) CURRENT_WIZARD_VERSION else 0)
             .apply()
+    }
+
+    /** When wizard format changes, force restricted-settings step again. */
+    fun migrateIfNeeded(context: Context) {
+        val p = prefs(context)
+        val v = p.getInt(KEY_WIZARD_VERSION, 0)
+        if (v < CURRENT_WIZARD_VERSION) {
+            p.edit()
+                .putBoolean(KEY_WIZARD_DONE, false)
+                .putBoolean(KEY_RESTRICTED_DONE, false)
+                .putInt(KEY_WIZARD_VERSION, CURRENT_WIZARD_VERSION)
+                .apply()
+        }
     }
 
     fun isBatteryDone(context: Context): Boolean =

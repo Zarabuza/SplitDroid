@@ -88,6 +88,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         notifyFallback = AutoPausePrefs.isNotifyFallback(context)
         vpnApps = VpnAppScanner.listVpnApps(context)
         restrictedSettingsDone = SetupPrefs.isRestrictedDone(context)
+        // Ensure old installs re-see step 2 (restricted settings).
+        SetupPrefs.migrateIfNeeded(context)
+        restrictedSettingsDone = SetupPrefs.isRestrictedDone(context)
         batteryOptIgnored = PermissionIntents.isIgnoringBatteryOptimizations(context)
         batteryMarkedDone = SetupPrefs.isBatteryDone(context) || batteryOptIgnored
         autostartMarkedDone = SetupPrefs.isAutostartDone(context)

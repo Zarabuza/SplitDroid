@@ -388,11 +388,11 @@ fun SetupWizardScreen(
                 step = 3,
                 title = if (accessibilityCrashed) "Спец. возможности убиты — включи снова" else "Спец. возможности",
                 body = if (accessibilityCrashed)
-                    "Выключи и снова включи «Раздельный туннель». Иначе kick/restore не работают."
+                    "Выключи и снова включи «Раздельный туннель». Если переключатель серый — сначала шаг 2 (ограниченные настройки)."
                 else
-                    "Включи службу «Раздельный туннель». Xiaomi: Скачанные приложения → Раздельный туннель.",
+                    "Включи службу «Раздельный туннель». Если переключатель серый — вернись на шаг 2.",
                 primary = "Открыть спец. возможности", onPrimary = onOpenAccessibility,
-                secondary = null, onSecondary = null,
+                secondary = "Переключатель серый — к шагу 2", onSecondary = onBackToRestricted,
                 hint = "После включения вернись — шаг отметится сам."
             )
             !vpnPermissionGranted || selectedVpnPackage.isBlank() -> {
