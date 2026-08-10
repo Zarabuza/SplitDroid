@@ -12,7 +12,7 @@ object SetupPrefs {
     private const val KEY_NOTIFICATIONS_DONE = "notifications_done"
 
     /** Bump to force everyone through the new permission wizard once. */
-    const val CURRENT_WIZARD_VERSION = 2
+    const val CURRENT_WIZARD_VERSION = 3
 
     fun isRestrictedDone(context: Context): Boolean =
         prefs(context).getBoolean(KEY_RESTRICTED_DONE, false)

@@ -130,6 +130,9 @@ class MainActivity : ComponentActivity() {
                             onOpenAppInfo = { safeStart(PermissionIntents.appInfo(this)) },
                             onMarkRestrictedDone = { viewModel.markRestrictedDone() },
                             onOpenAccessibility = { openAccessibilitySettings() },
+                            onBackToRestricted = {
+                                viewModel.resetRestrictedAndStayOnStep2()
+                            },
                             onRequestVpn = { ensureVpnPermissionForAutoPause() },
                             onSelectVpn = { viewModel.selectVpnApp(it) },
                             onOpenBattery = { openBatteryOptimizationSettings() },
@@ -329,6 +332,7 @@ fun SetupWizardScreen(
     onOpenAppInfo: () -> Unit,
     onMarkRestrictedDone: () -> Unit,
     onOpenAccessibility: () -> Unit,
+    onBackToRestricted: () -> Unit,
     onRequestVpn: () -> Unit,
     onSelectVpn: (VpnAppInfo) -> Unit,
     onOpenBattery: () -> Unit,

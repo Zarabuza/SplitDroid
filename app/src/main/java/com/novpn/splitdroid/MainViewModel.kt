@@ -131,10 +131,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (autoPauseEnabled && accessibilityRunning) AutoPauseKeepAliveService.start(context)
         else if (!autoPauseEnabled) AutoPauseKeepAliveService.stop(context)
 
-        if (accessibilityEnabled && !restrictedSettingsDone) {
-            SetupPrefs.setRestrictedDone(context, true)
-            restrictedSettingsDone = true
-        }
+        // Do NOT auto-skip "restricted settings": HyperOS can list a11y as enabled
+        // while the toggle is still gray until restricted settings are allowed.
         if (batteryOptIgnored) {
             SetupPrefs.setBatteryDone(context, true)
             batteryMarkedDone = true
@@ -205,8 +203,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun reopenWizard() {
-        SetupPrefs.setWizardDone(getApplication(), false)
+        val context = getApplication<Application>()
+        // Force user through restricted settings again — common HyperOS failure.
+        SetupPrefs.setWizardDone(context, false)
+        SetupPrefs.setRestrictedDone(context, false)
+        restrictedSettingsDone = false
         showSetupWizard = true
+        refreshState()
+    }
+
+    /** User must explicitly confirm restricted settings; never auto-skip. */
+    fun resetRestrictedAndStayOnStep2() {
+        val context = getApplication<Application>()
+        SetupPrefs.setRestrictedDone(context, false)
+        restrictedSettingsDone = false
         refreshState()
     }
 
