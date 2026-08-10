@@ -2,6 +2,7 @@ package com.novpn.splitdroid
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.net.VpnService
 import android.os.Bundle
 import android.provider.Settings
@@ -9,8 +10,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -21,7 +25,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -33,6 +40,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -41,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -59,6 +68,10 @@ class MainActivity : ComponentActivity() {
             pendingStartTunnel = false
             startVpnService()
         }
+        if (granted) {
+            viewModel.refreshState()
+            maybeFinishWizard()
+        }
     }
 
     private var pendingStartTunnel = false
@@ -75,6 +88,7 @@ class MainActivity : ComponentActivity() {
                         val observer = LifecycleEventObserver { _, event ->
                             if (event == Lifecycle.Event.ON_RESUME) {
                                 viewModel.refreshState()
+                                maybeFinishWizard()
                                 if (pendingAutoPause && viewModel.accessibilityEnabled) {
                                     pendingAutoPause = false
                                     ensureVpnPermissionForAutoPause()
@@ -85,25 +99,62 @@ class MainActivity : ComponentActivity() {
                         onDispose { lifecycle.removeObserver(observer) }
                     }
 
-                    MainScreen(
-                        isRunning = viewModel.isRunning,
-                        statusText = viewModel.statusText,
-                        autoPauseEnabled = viewModel.autoPauseEnabled,
-                        autoPauseStatus = viewModel.autoPauseStatus,
-                        accessibilityEnabled = viewModel.accessibilityEnabled,
-                        selectedVpnLabel = viewModel.selectedVpnLabel,
-                        selectedVpnPackage = viewModel.selectedVpnPackage,
-                        vpnApps = viewModel.vpnApps,
-                        notifyFallback = viewModel.notifyFallback,
-                        onToggleTunnel = { enabled -> onTunnelChanged(enabled) },
-                        onToggleAutoPause = { enabled -> onAutoPauseChanged(enabled) },
-                        onToggleNotifyFallback = { viewModel.updateNotifyFallback(it) },
-                        onOpenAccessibility = { openAccessibilitySettings() },
-                        onSelectVpn = { viewModel.selectVpnApp(it) },
-                        onRequestVpnPermission = { ensureVpnPermissionForAutoPause() }
-                    )
+                    if (viewModel.showSetupWizard) {
+                        SetupWizardScreen(
+                            step = viewModel.setupStep,
+                            restrictedDone = viewModel.restrictedSettingsDone,
+                            accessibilityEnabled = viewModel.accessibilityEnabled,
+                            vpnPermissionGranted = viewModel.vpnPermissionGranted,
+                            vpnApps = viewModel.vpnApps,
+                            selectedVpnPackage = viewModel.selectedVpnPackage,
+                            onOpenAppInfo = { openAppInfoForRestrictedSettings() },
+                            onMarkRestrictedDone = {
+                                viewModel.markRestrictedDone()
+                            },
+                            onOpenAccessibility = { openAccessibilitySettings() },
+                            onRequestVpn = { ensureVpnPermissionForAutoPause() },
+                            onSelectVpn = { viewModel.selectVpnApp(it) },
+                            onFinish = {
+                                viewModel.completeWizard()
+                                viewModel.updateAutoPauseEnabled(true)
+                                pendingAutoPause = true
+                                ensureVpnPermissionForAutoPause()
+                            }
+                        )
+                    } else {
+                        MainScreen(
+                            isRunning = viewModel.isRunning,
+                            statusText = viewModel.statusText,
+                            autoPauseEnabled = viewModel.autoPauseEnabled,
+                            autoPauseStatus = viewModel.autoPauseStatus,
+                            accessibilityEnabled = viewModel.accessibilityEnabled,
+                            selectedVpnLabel = viewModel.selectedVpnLabel,
+                            selectedVpnPackage = viewModel.selectedVpnPackage,
+                            vpnApps = viewModel.vpnApps,
+                            notifyFallback = viewModel.notifyFallback,
+                            onToggleTunnel = { enabled -> onTunnelChanged(enabled) },
+                            onToggleAutoPause = { enabled -> onAutoPauseChanged(enabled) },
+                            onToggleNotifyFallback = { viewModel.updateNotifyFallback(it) },
+                            onOpenAccessibility = { openAccessibilitySettings() },
+                            onOpenSetup = { viewModel.reopenWizard() },
+                            onSelectVpn = { viewModel.selectVpnApp(it) },
+                            onRequestVpnPermission = { ensureVpnPermissionForAutoPause() }
+                        )
+                    }
                 }
             }
+        }
+    }
+
+    private fun maybeFinishWizard() {
+        if (viewModel.showSetupWizard &&
+            viewModel.restrictedSettingsDone &&
+            viewModel.accessibilityEnabled &&
+            viewModel.vpnPermissionGranted &&
+            viewModel.selectedVpnPackage.isNotBlank()
+        ) {
+            viewModel.completeWizard()
+            viewModel.updateAutoPauseEnabled(true)
         }
     }
 
@@ -127,10 +178,9 @@ class MainActivity : ComponentActivity() {
 
     private fun onAutoPauseChanged(enabled: Boolean) {
         if (enabled) {
-            if (!viewModel.accessibilityEnabled) {
+            if (!viewModel.accessibilityEnabled || !viewModel.restrictedSettingsDone) {
                 pendingAutoPause = true
-                viewModel.updateAutoPauseEnabled(true)
-                openAccessibilitySettings()
+                viewModel.reopenWizard()
                 return
             }
             viewModel.updateAutoPauseEnabled(true)
@@ -141,6 +191,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun openAppInfoForRestrictedSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
     private fun ensureVpnPermissionForAutoPause() {
         val prepareIntent = VpnService.prepare(this)
         if (prepareIntent != null) {
@@ -148,19 +206,261 @@ class MainActivity : ComponentActivity() {
             vpnPermissionLauncher.launch(prepareIntent)
         } else {
             viewModel.onVpnPermissionResult(true)
+            maybeFinishWizard()
         }
     }
 
     private fun openAccessibilitySettings() {
-        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        })
+        val component = android.content.ComponentName(
+            this,
+            VpnAutoPauseAccessibilityService::class.java
+        )
+        try {
+            val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+                putExtra(Intent.EXTRA_COMPONENT_NAME, component)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(details)
+            return
+        } catch (_: Exception) {
+        }
+        try {
+            val details = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").apply {
+                putExtra("android.intent.extra.COMPONENT_NAME", component.flattenToString())
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(details)
+            return
+        } catch (_: Exception) {
+        }
+
+        val showArgs = component.flattenToString()
+        val fragmentArgs = Bundle().apply {
+            putString(":settings:fragment_args_key", showArgs)
+        }
+        startActivity(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                putExtra(":settings:fragment_args_key", showArgs)
+                putExtra(":settings:show_fragment_args", fragmentArgs)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
     }
 
     private fun startVpnService() {
         val intent = Intent(this, SplitTunnelVpnService::class.java)
         startForegroundService(intent)
         viewModel.markRunning(true)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SetupWizardScreen(
+    step: Int,
+    restrictedDone: Boolean,
+    accessibilityEnabled: Boolean,
+    vpnPermissionGranted: Boolean,
+    vpnApps: List<VpnAppInfo>,
+    selectedVpnPackage: String,
+    onOpenAppInfo: () -> Unit,
+    onMarkRestrictedDone: () -> Unit,
+    onOpenAccessibility: () -> Unit,
+    onRequestVpn: () -> Unit,
+    onSelectVpn: (VpnAppInfo) -> Unit,
+    onFinish: () -> Unit
+) {
+    val current = when {
+        !restrictedDone -> 1
+        !accessibilityEnabled -> 2
+        !vpnPermissionGranted || selectedVpnPackage.isBlank() -> 3
+        else -> 3
+    }.coerceAtLeast(step)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "Быстрая настройка",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Нужно 2 системных разрешения — без них автопауза VPN не работает. Android требует это вручную.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+        StepDots(current = current, total = 3)
+        Spacer(modifier = Modifier.height(24.dp))
+
+        when {
+            !restrictedDone -> {
+                WizardCard(
+                    step = 1,
+                    title = "Разрешить ограниченные настройки",
+                    body = "APK не из Play Store блокируется. Откройте сведения о приложении → нажмите ⋮ справа сверху → «Разрешить настройки с ограниченным доступом».",
+                    primary = "Открыть сведения о приложении",
+                    onPrimary = onOpenAppInfo,
+                    secondary = "Готово — я разрешил",
+                    onSecondary = onMarkRestrictedDone
+                )
+            }
+            !accessibilityEnabled -> {
+                WizardCard(
+                    step = 2,
+                    title = "Включить спец. возможности",
+                    body = "Откройте службу «Раздельный туннель» и включите переключатель. На Xiaomi: Скачанные приложения → Раздельный туннель.",
+                    primary = "Открыть спец. возможности",
+                    onPrimary = onOpenAccessibility,
+                    secondary = null,
+                    onSecondary = null,
+                    hint = "Вернитесь сюда после включения — шаг отметится сам."
+                )
+            }
+            else -> {
+                WizardCard(
+                    step = 3,
+                    title = "VPN и приложение для возврата",
+                    body = "Один раз разрешите VPN (нужно, чтобы сбрасывать чужой туннель). Выберите VPN, который будем включать обратно (например ЮБуст).",
+                    primary = if (!vpnPermissionGranted) "Разрешить VPN" else null,
+                    onPrimary = if (!vpnPermissionGranted) onRequestVpn else null,
+                    secondary = null,
+                    onSecondary = null
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Какой VPN возвращать после банка?",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (vpnApps.isEmpty()) {
+                        Text(
+                            text = "Установите ЮБуст или другой VPN, затем вернитесь.",
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                    } else {
+                        vpnApps.forEach { app ->
+                            FilterChip(
+                                selected = app.packageName == selectedVpnPackage,
+                                onClick = { onSelectVpn(app) },
+                                label = { Text(app.label) }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(20.dp))
+                val canFinish = vpnPermissionGranted && selectedVpnPackage.isNotBlank()
+                Button(
+                    onClick = onFinish,
+                    enabled = canFinish,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Готово — включить автопаузу")
+                }
+                if (!canFinish) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Сначала разрешите VPN и выберите приложение.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepDots(current: Int, total: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        repeat(total) { i ->
+            val n = i + 1
+            val active = n == current
+            val done = n < current
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .background(
+                        when {
+                            done -> Color(0xFF2E7D32)
+                            active -> MaterialTheme.colorScheme.primary
+                            else -> Color(0xFFBDBDBD)
+                        },
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (done) "✓" else "$n",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WizardCard(
+    step: Int,
+    title: String,
+    body: String,
+    primary: String?,
+    onPrimary: (() -> Unit)?,
+    secondary: String?,
+    onSecondary: (() -> Unit)?,
+    hint: String? = null
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+            .padding(20.dp),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Text(
+            text = "Шаг $step из 3",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (hint != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = hint, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        if (primary != null && onPrimary != null) {
+            Button(onClick = onPrimary, modifier = Modifier.fillMaxWidth()) {
+                Text(primary)
+            }
+        }
+        if (secondary != null && onSecondary != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = onSecondary, modifier = Modifier.fillMaxWidth()) {
+                Text(secondary)
+            }
+        }
     }
 }
 
@@ -180,6 +480,7 @@ fun MainScreen(
     onToggleAutoPause: (Boolean) -> Unit,
     onToggleNotifyFallback: (Boolean) -> Unit,
     onOpenAccessibility: () -> Unit,
+    onOpenSetup: () -> Unit,
     onSelectVpn: (VpnAppInfo) -> Unit,
     onRequestVpnPermission: () -> Unit
 ) {
@@ -220,19 +521,13 @@ fun MainScreen(
 
         Spacer(modifier = Modifier.height(28.dp))
 
-        Text(
-            text = "Автоотключение VPN",
-            style = MaterialTheme.typography.titleMedium
-        )
+        Text(text = "Автоотключение VPN", style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(8.dp))
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Switch(
-                checked = autoPauseEnabled,
-                onCheckedChange = onToggleAutoPause
-            )
+            Switch(checked = autoPauseEnabled, onCheckedChange = onToggleAutoPause)
             Text(
                 text = autoPauseStatus,
                 style = MaterialTheme.typography.bodyLarge,
@@ -241,29 +536,25 @@ fun MainScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (autoPauseEnabled && !accessibilityEnabled) {
-            Button(onClick = onOpenAccessibility) {
-                Text("Открыть спец. возможности")
+        if (!accessibilityEnabled) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(onClick = onOpenSetup, modifier = Modifier.fillMaxWidth()) {
+                Text("Пройти настройку заново")
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Включите «Раздельный туннель» в Специальных возможностях — иначе фон не работает.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray,
-                textAlign = TextAlign.Center
-            )
+            OutlinedButton(onClick = onOpenAccessibility, modifier = Modifier.fillMaxWidth()) {
+                Text("Открыть спец. возможности")
+            }
         }
 
         if (autoPauseEnabled && accessibilityEnabled) {
+            Spacer(modifier = Modifier.height(8.dp))
             OutlinedButton(onClick = onRequestVpnPermission) {
                 Text("Проверить разрешение VPN")
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
         Text(
             text = "VPN для тихого возврата: $selectedVpnLabel",
             style = MaterialTheme.typography.bodyMedium,
@@ -277,10 +568,9 @@ fun MainScreen(
         ) {
             if (vpnApps.isEmpty()) {
                 Text(
-                    text = "VPN‑приложения не найдены. Установите ЮБуст или другой VPN.",
+                    text = "VPN‑приложения не найдены.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    textAlign = TextAlign.Center
+                    color = Color.Gray
                 )
             } else {
                 vpnApps.forEach { app ->
@@ -294,36 +584,26 @@ fun MainScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(text = "Уведомление, если клик не сработал", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    text = "Уведомление, если клик не сработал",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    text = "По умолчанию выкл. — восстановление без уведомлений",
+                    text = "По умолчанию выкл.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
             }
-            Switch(
-                checked = notifyFallback,
-                onCheckedChange = onToggleNotifyFallback
-            )
+            Switch(checked = notifyFallback, onCheckedChange = onToggleNotifyFallback)
         }
 
         Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "В фоне: банк → чужой VPN сбрасывается. Выход → открывается ваш VPN и нажимается «Подключить» / Connect, затем возврат к предыдущему приложению.",
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
-            textAlign = TextAlign.Center
-        )
+        TextButton(onClick = onOpenSetup) {
+            Text("Мастер настройки разрешений")
+        }
 
         Spacer(modifier = Modifier.height(24.dp))
         HorizontalDivider()
@@ -339,11 +619,7 @@ fun MainScreen(
             checked = isRunning || statusText == "Запускается...",
             onCheckedChange = onToggleTunnel
         )
-        Text(
-            text = statusText,
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray
-        )
+        Text(text = statusText, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
 
         Spacer(modifier = Modifier.height(20.dp))
         FlowRow(
@@ -352,13 +628,9 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             RussianServicesList.services.forEach { service ->
-                AssistChip(
-                    onClick = {},
-                    label = { Text(service.name) }
-                )
+                AssistChip(onClick = {}, label = { Text(service.name) })
             }
         }
-
         Spacer(modifier = Modifier.height(16.dp))
     }
 }
@@ -367,15 +639,9 @@ fun MainScreen(
 fun SplitDroidTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
     val colors = if (dark) {
-        darkColorScheme(
-            primary = Color(0xFF81C784),
-            secondary = Color(0xFFA5D6A7)
-        )
+        darkColorScheme(primary = Color(0xFF81C784), secondary = Color(0xFFA5D6A7))
     } else {
-        lightColorScheme(
-            primary = Color(0xFF2E7D32),
-            secondary = Color(0xFF66BB6A)
-        )
+        lightColorScheme(primary = Color(0xFF2E7D32), secondary = Color(0xFF66BB6A))
     }
     MaterialTheme(colorScheme = colors, content = content)
 }

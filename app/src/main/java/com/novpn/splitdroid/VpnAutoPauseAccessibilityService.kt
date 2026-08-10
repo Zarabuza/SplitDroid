@@ -1,12 +1,15 @@
 package com.novpn.splitdroid
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -19,7 +22,7 @@ import androidx.core.app.NotificationManagerCompat
 
 /**
  * Background watcher: kick third-party VPN on Russian bank/gov apps;
- * on leave, silently launch the selected VPN app and auto-click Connect.
+ * on leave (including Home/launcher), silently launch VPN and auto-click Connect.
  */
 class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
@@ -28,6 +31,8 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
     private var restoreClickSucceeded = false
     private var fallbackRunnable: Runnable? = null
     private var returnHomeRunnable: Runnable? = null
+    private var lastKickAtMs = 0L
+    private var lastRestoreAtMs = 0L
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
@@ -36,7 +41,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         val type = event.eventType
         val pkg = event.packageName?.toString()?.takeIf { it.isNotBlank() } ?: return
 
-        // While restoring, keep trying to click Connect on VPN UI
+        // While restoring: keep trying Connect on the VPN UI
         if (AutoPausePrefs.isRestoring(this) && isSelectedVpnPackage(pkg)) {
             if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
@@ -53,20 +58,37 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             return
         }
 
-        if (shouldIgnorePackage(pkg)) return
+        val isLauncher = pkg in LAUNCHER_PACKAGES
+        // Ignore Settings / permission UI noise, but NEVER ignore launchers when paused
+        // (Home was previously ignored → restore never ran → stuck forever).
+        if (pkg in NOISE_PACKAGES) return
+        if (pkg == packageName) return
+        if (shouldIgnoreAsNoise(pkg) && !isLauncher && !AutoPausePrefs.isPaused(this)) return
+
         if (pkg == lastForegroundPackage) return
         val previous = lastForegroundPackage
         lastForegroundPackage = pkg
 
         val isRu = RussianPackages.packages.contains(pkg)
-        if (isRu) {
-            onEnteredRussianApp(pkg, previous)
-        } else if (!isSelectedVpnPackage(pkg)) {
-            onLeftRussianApp(pkg)
+        Log.d(TAG, "foreground=$pkg ru=$isRu paused=${AutoPausePrefs.isPaused(this)}")
+
+        when {
+            isRu -> onEnteredRussianApp(pkg, previous)
+            AutoPausePrefs.isPaused(this) && !isSelectedVpnPackage(pkg) -> onLeftRussianApp(pkg)
         }
     }
 
     override fun onInterrupt() = Unit
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Log.i(TAG, "Accessibility connected; autoPause=${AutoPausePrefs.isEnabled(this)}")
+        // Clear sticky stuck flags from older buggy builds
+        if (!AutoPausePrefs.isEnabled(this)) {
+            AutoPausePrefs.setPaused(this, false)
+            AutoPausePrefs.setRestoring(this, false)
+        }
+    }
 
     override fun onDestroy() {
         cancelFallback()
@@ -80,18 +102,26 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         AutoPausePrefs.setRestoring(this, false)
         restoreClickSucceeded = false
 
-        // Remember where to return after silent reconnect (app before the bank)
         val returnPkg = previous
-            ?.takeIf { it.isNotBlank() && !shouldIgnorePackage(it) && !isSelectedVpnPackage(it) }
+            ?.takeIf { it.isNotBlank() && it !in NOISE_PACKAGES && it !in LAUNCHER_PACKAGES }
+            ?.takeIf { !isSelectedVpnPackage(it) }
             ?.takeIf { !RussianPackages.packages.contains(it) }
         if (!returnPkg.isNullOrBlank()) {
             AutoPausePrefs.setReturnPackage(this, returnPkg)
         }
 
         if (AutoPausePrefs.isPaused(this)) {
-            Log.d(TAG, "Already paused; foreground=$pkg")
+            Log.d(TAG, "Already paused; stay paused for $pkg")
             return
         }
+
+        val now = System.currentTimeMillis()
+        if (now - lastKickAtMs < 1500L) {
+            Log.d(TAG, "Kick debounced")
+            return
+        }
+        lastKickAtMs = now
+
         Log.i(TAG, "Russian app foreground: $pkg — kicking VPN")
         AutoPausePrefs.setPaused(this, true)
         VpnKickService.start(this)
@@ -101,8 +131,20 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         if (!AutoPausePrefs.isPaused(this)) return
         if (AutoPausePrefs.isRestoring(this)) return
 
+        val now = System.currentTimeMillis()
+        // Xiaomi often emits a brief launcher window right after kick/VPN revoke — ignore it.
+        if (now - lastKickAtMs < 3000L) {
+            Log.d(TAG, "Restore skipped: within kick grace ($pkg)")
+            return
+        }
+        if (now - lastRestoreAtMs < 2000L) {
+            Log.d(TAG, "Restore debounced")
+            return
+        }
+        lastRestoreAtMs = now
+
         Log.i(TAG, "Left Russian app; foreground=$pkg — silent VPN restore")
-        AutoPausePrefs.setPaused(this, false)
+        // Keep paused=true until restore finishes or fails, so we don't double-fire
         startSilentRestore()
     }
 
@@ -110,6 +152,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         val vpnPkg = AutoPausePrefs.vpnPackage(this)
         if (vpnPkg.isBlank()) {
             Log.w(TAG, "No VPN package selected for restore")
+            AutoPausePrefs.setPaused(this, false)
             if (AutoPausePrefs.isNotifyFallback(this)) {
                 showRestoreNotification(null)
             }
@@ -117,9 +160,16 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         }
 
         val launchIntent = packageManager.getLaunchIntentForPackage(vpnPkg)
-            ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+            ?.apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            }
         if (launchIntent == null) {
             Log.w(TAG, "Cannot launch VPN package $vpnPkg")
+            AutoPausePrefs.setPaused(this, false)
             if (AutoPausePrefs.isNotifyFallback(this)) {
                 showRestoreNotification(null)
             }
@@ -134,26 +184,26 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to launch VPN app $vpnPkg", e)
             AutoPausePrefs.setRestoring(this, false)
+            AutoPausePrefs.setPaused(this, false)
             if (AutoPausePrefs.isNotifyFallback(this)) {
                 showRestoreNotification(null)
             }
             return
         }
 
-        // Retry click shortly after UI settles
-        handler.postDelayed({ tryAutoClickConnect() }, 400)
-        handler.postDelayed({ tryAutoClickConnect() }, 1200)
-        handler.postDelayed({ tryAutoClickConnect() }, 2200)
+        listOf(400L, 900L, 1500L, 2200L, 3200L, 4500L, 6500L, 8500L).forEach { delay ->
+            handler.postDelayed({ tryAutoClickConnect() }, delay)
+        }
 
         cancelFallback()
         val fallback = Runnable {
             if (restoreClickSucceeded) return@Runnable
             Log.w(TAG, "Silent connect click timed out")
             AutoPausePrefs.setRestoring(this, false)
+            AutoPausePrefs.setPaused(this, false)
             if (AutoPausePrefs.isNotifyFallback(this)) {
                 showRestoreNotification(launchIntent)
             } else {
-                // Leave VPN UI; user can connect manually without a notification
                 returnToPreviousOrHome()
             }
         }
@@ -170,17 +220,19 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             if (vpnPkg.isNotBlank() && rootPkg != null && rootPkg != vpnPkg) {
                 return
             }
+
+            // ЮБуст / many VPNs: after launch they may already be ON or connecting.
+            // Treat "ОТКЛЮЧИТЬ" / connected as restore success — do NOT click (would disconnect).
+            if (vpnLooksAlreadyOn(root)) {
+                Log.i(TAG, "VPN UI already connected/connecting — restore done")
+                onRestoreSucceeded()
+                return
+            }
+
             val clicked = clickConnectButton(root)
             if (clicked) {
                 Log.i(TAG, "Auto-clicked Connect in VPN app")
-                restoreClickSucceeded = true
-                cancelFallback()
-                AutoPausePrefs.setRestoring(this, false)
-                // Brief delay so VPN can process the tap, then leave its UI
-                cancelReturnHome()
-                val go = Runnable { returnToPreviousOrHome() }
-                returnHomeRunnable = go
-                handler.postDelayed(go, 700)
+                onRestoreSucceeded()
             }
         } catch (e: Exception) {
             Log.w(TAG, "tryAutoClickConnect failed", e)
@@ -192,6 +244,33 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun onRestoreSucceeded() {
+        restoreClickSucceeded = true
+        cancelFallback()
+        AutoPausePrefs.setRestoring(this, false)
+        AutoPausePrefs.setPaused(this, false)
+        cancelReturnHome()
+        val go = Runnable { returnToPreviousOrHome() }
+        returnHomeRunnable = go
+        handler.postDelayed(go, 900)
+    }
+
+    private fun vpnLooksAlreadyOn(root: AccessibilityNodeInfo): Boolean {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            val text = nodeLabel(node)
+            if (text.isNotEmpty() && looksLikeAlreadyConnected(text)) {
+                return true
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
+        }
+        return false
+    }
+
     private fun clickConnectButton(root: AccessibilityNodeInfo): Boolean {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
@@ -200,20 +279,27 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
-            val text = buildString {
-                node.text?.let { append(it) }
-                append(' ')
-                node.contentDescription?.let { append(it) }
-            }.trim().lowercase()
+            val className = node.className?.toString().orEmpty()
+            val text = nodeLabel(node)
 
+            var score = 0
             if (text.isNotEmpty() && looksLikeDisconnect(text)) {
-                // skip
-            } else if (text.isNotEmpty()) {
-                val score = connectScore(text)
-                if (score > bestScore && (node.isClickable || node.isEnabled)) {
-                    bestScore = score
-                    best = node
+                score = 0
+            } else {
+                if (text.isNotEmpty()) score = connectScore(text)
+                // Unchecked Switch / toggle in VPN apps often means "off → tap to connect"
+                if ((className.contains("Switch", ignoreCase = true) ||
+                        className.contains("Toggle", ignoreCase = true) ||
+                        className.contains("CheckBox", ignoreCase = true)) &&
+                    node.isEnabled && !node.isChecked
+                ) {
+                    score = maxOf(score, 78)
                 }
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                best = node
             }
 
             for (i in 0 until node.childCount) {
@@ -222,24 +308,51 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         }
 
         val target = best ?: return false
-        if (bestScore <= 0) return false
+        if (bestScore <= 0) {
+            Log.d(TAG, "No Connect target found in VPN UI")
+            return false
+        }
+        Log.d(TAG, "Connect target score=$bestScore label='${nodeLabel(target)}'")
 
-        // Prefer clicking the node itself; else walk up to a clickable parent
         var clickable: AccessibilityNodeInfo? = target
         while (clickable != null && !clickable.isClickable) {
             clickable = clickable.parent
         }
         val toClick = clickable ?: target
-        val ok = toClick.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        if (!ok) {
-            // Some VPN UIs use a Switch — try toggle via click on parent again
-            toClick.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+
+        // Compose (ЮБуст) often ignores ACTION_CLICK — tap center via gesture.
+        if (gestureClick(toClick)) return true
+        if (toClick.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        if (toClick.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return true
+        return gestureClick(target)
+    }
+
+    private fun gestureClick(node: AccessibilityNodeInfo): Boolean {
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.isEmpty) return false
+        val x = bounds.exactCenterX()
+        val y = bounds.exactCenterY()
+        val path = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 80)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        return try {
+            dispatchGesture(gesture, null, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "gestureClick failed", e)
+            false
         }
-        return true
+    }
+
+    private fun nodeLabel(node: AccessibilityNodeInfo): String {
+        return buildString {
+            node.text?.let { append(it) }
+            append(' ')
+            node.contentDescription?.let { append(it) }
+        }.trim().lowercase()
     }
 
     private fun connectScore(text: String): Int {
-        // Higher = better match. Avoid weak single-letter hits.
         return when {
             text == "подключить" || text == "connect" -> 100
             text == "включить" || text == "enable" -> 95
@@ -250,6 +363,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             text.contains("включить") -> 85
             text.contains("enable") || text.contains("turn on") -> 75
             text == "start" || text.contains("start vpn") -> 70
+            text.contains("соединен") -> 65
             text == "вкл" -> 60
             else -> 0
         }
@@ -257,6 +371,11 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
 
     private fun looksLikeDisconnect(text: String): Boolean {
         return DISCONNECT_HINTS.any { text == it || text.contains(it) }
+    }
+
+    /** VPN already up or reconnecting — restore should finish without tapping. */
+    private fun looksLikeAlreadyConnected(text: String): Boolean {
+        return ALREADY_ON_HINTS.any { text == it || text.contains(it) }
     }
 
     private fun returnToPreviousOrHome() {
@@ -327,9 +446,11 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         return selected.isNotBlank() && pkg == selected
     }
 
-    private fun shouldIgnorePackage(pkg: String): Boolean {
-        if (pkg == packageName) return true
-        return pkg in IGNORED_PACKAGES
+    private fun shouldIgnoreAsNoise(pkg: String): Boolean {
+        return pkg.startsWith("com.android.") ||
+            pkg.startsWith("com.miui.") ||
+            pkg.startsWith("com.xiaomi.") ||
+            pkg in NOISE_PACKAGES
     }
 
     private fun cancelFallback() {
@@ -346,7 +467,7 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
         private const val TAG = "VpnAutoPauseA11y"
         private const val CHANNEL_ID = "auto_pause_vpn"
         private const val NOTIF_RESTORE = 2002
-        private const val FALLBACK_MS = 3000L
+        private const val FALLBACK_MS = 11000L
 
         const val PREFERRED_VPN_PACKAGE = "st.uboo.android.client"
 
@@ -359,8 +480,18 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             "disable"
         )
 
-        private val IGNORED_PACKAGES = setOf(
-            "com.android.systemui",
+        private val ALREADY_ON_HINTS = listOf(
+            "отключить",
+            "выключить",
+            "disconnect",
+            "turn off",
+            "stop vpn",
+            "connected",
+            "подключено",
+            "соединено"
+        )
+
+        private val LAUNCHER_PACKAGES = setOf(
             "com.android.launcher",
             "com.android.launcher3",
             "com.google.android.apps.nexuslauncher",
@@ -368,9 +499,14 @@ class VpnAutoPauseAccessibilityService : AccessibilityService() {
             "com.miui.home",
             "com.huawei.android.launcher",
             "com.oppo.launcher",
+            "com.android.systemui" // recent apps / home gestures sometimes
+        )
+
+        private val NOISE_PACKAGES = setOf(
             "com.android.settings",
             "com.android.permissioncontroller",
             "com.google.android.permissioncontroller",
+            "com.android.systemui",
             "android"
         )
 

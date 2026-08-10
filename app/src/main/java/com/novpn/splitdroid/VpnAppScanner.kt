@@ -11,24 +11,56 @@ data class VpnAppInfo(
 )
 
 object VpnAppScanner {
+    private val knownVpnPackages = listOf(
+        "st.uboo.android.client" to "ЮБуст",
+        "org.outline.android.client" to "Outline",
+        "com.v2ray.ang" to "v2rayNG",
+        "com.v2raytun.android" to "V2RayTun",
+        "com.happ.proxy" to "Happ",
+        "org.amnezia.vpn" to "AmneziaVPN",
+        "com.wireguard.android" to "WireGuard",
+        "de.blinkt.openvpn" to "OpenVPN",
+        "com.protonvpn.android" to "Proton VPN",
+        "com.nordvpn.android" to "NordVPN"
+    )
+
     fun listVpnApps(context: Context): List<VpnAppInfo> = listInstalledVpnApps(context)
 
     fun listInstalledVpnApps(context: Context): List<VpnAppInfo> {
         val pm = context.packageManager
+        val found = LinkedHashMap<String, VpnAppInfo>()
+
         val intent = Intent(VpnService.SERVICE_INTERFACE)
         @Suppress("DEPRECATION")
-        val resolves = pm.queryIntentServices(intent, PackageManager.MATCH_DEFAULT_ONLY)
-        return resolves.mapNotNull { info ->
-            val serviceInfo = info.serviceInfo ?: return@mapNotNull null
+        val resolves = try {
+            pm.queryIntentServices(intent, PackageManager.MATCH_ALL)
+        } catch (_: Exception) {
+            @Suppress("DEPRECATION")
+            pm.queryIntentServices(intent, 0)
+        }
+
+        resolves.forEach { info ->
+            val serviceInfo = info.serviceInfo ?: return@forEach
             val pkg = serviceInfo.packageName
-            if (pkg == context.packageName) return@mapNotNull null
+            if (pkg == context.packageName) return@forEach
             val label = try {
                 pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
             } catch (_: Exception) {
                 info.loadLabel(pm)?.toString() ?: pkg
             }
-            VpnAppInfo(pkg, label)
-        }.distinctBy { it.packageName }
-            .sortedBy { it.label.lowercase() }
+            found[pkg] = VpnAppInfo(pkg, label)
+        }
+
+        knownVpnPackages.forEach { (pkg, fallbackLabel) ->
+            if (found.containsKey(pkg)) return@forEach
+            try {
+                val appInfo = pm.getApplicationInfo(pkg, 0)
+                val label = pm.getApplicationLabel(appInfo).toString().ifBlank { fallbackLabel }
+                found[pkg] = VpnAppInfo(pkg, label)
+            } catch (_: Exception) {
+            }
+        }
+
+        return found.values.sortedBy { it.label.lowercase() }
     }
 }

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.net.VpnService
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -40,6 +41,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     var notifyFallback by mutableStateOf(false)
         private set
 
+    var showSetupWizard by mutableStateOf(true)
+        private set
+
+    var restrictedSettingsDone by mutableStateOf(false)
+        private set
+
+    var setupStep by mutableIntStateOf(1)
+        private set
+
     private var isStarting = false
 
     init {
@@ -69,6 +79,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         accessibilityEnabled = VpnAutoPauseAccessibilityService.isAccessibilityEnabled(context)
         notifyFallback = AutoPausePrefs.isNotifyFallback(context)
         vpnApps = VpnAppScanner.listVpnApps(context)
+        restrictedSettingsDone = SetupPrefs.isRestrictedDone(context)
 
         selectedVpnPackage = AutoPausePrefs.vpnPackage(context)
         if (selectedVpnPackage.isBlank()) {
@@ -94,7 +105,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> "Следит в фоне"
         }
 
+        setupStep = when {
+            !restrictedSettingsDone -> 1
+            !accessibilityEnabled -> 2
+            else -> 3
+        }
+
+        // If accessibility already works, restricted settings were allowed.
+        if (accessibilityEnabled && !restrictedSettingsDone) {
+            SetupPrefs.setRestrictedDone(context, true)
+            restrictedSettingsDone = true
+        }
+
+        val setupReady = restrictedSettingsDone &&
+            accessibilityEnabled &&
+            vpnPermissionGranted &&
+            selectedVpnPackage.isNotBlank()
+
+        // Always show wizard until everything needed for auto-pause is ready.
+        showSetupWizard = !setupReady
+
         updateStatusText()
+    }
+
+    fun markRestrictedDone() {
+        val context = getApplication<Application>()
+        SetupPrefs.setRestrictedDone(context, true)
+        restrictedSettingsDone = true
+        setupStep = 2
+        refreshState()
+    }
+
+    fun completeWizard() {
+        val context = getApplication<Application>()
+        SetupPrefs.setWizardDone(context, true)
+        SetupPrefs.setRestrictedDone(context, true)
+        restrictedSettingsDone = true
+        showSetupWizard = false
+        refreshState()
+    }
+
+    fun reopenWizard() {
+        showSetupWizard = true
+        setupStep = when {
+            !restrictedSettingsDone -> 1
+            !accessibilityEnabled -> 2
+            else -> 3
+        }
     }
 
     fun updateAutoPauseEnabled(enabled: Boolean) {

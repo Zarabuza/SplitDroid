@@ -33,6 +33,7 @@ class VpnKickService : VpnService() {
 
         if (prepare(this) != null) {
             Log.w(TAG, "VPN permission not granted; cannot kick")
+            AutoPausePrefs.setPaused(this, false)
             finish()
             return START_NOT_STICKY
         }
@@ -43,9 +44,15 @@ class VpnKickService : VpnService() {
                 .setSession(SESSION_NAME)
                 .addAddress(VPN_ADDRESS, 32)
                 .establish()
-            Log.i(TAG, "VPN kick established (revoking other VPN)")
+            if (pfd == null) {
+                Log.e(TAG, "VPN kick establish() returned null")
+                AutoPausePrefs.setPaused(this, false)
+            } else {
+                Log.i(TAG, "VPN kick established (revoking other VPN)")
+            }
         } catch (e: Exception) {
             Log.e(TAG, "VPN kick failed", e)
+            AutoPausePrefs.setPaused(this, false)
         } finally {
             try {
                 pfd?.close()
